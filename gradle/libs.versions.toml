@@ -1,5 +1,5 @@
 [versions]
-agp = "9.3.2"
+agp = "9.4.0"
 # Pinned to the Kotlin Gradle Plugin version AGP 9.2.0 bundles for its
 # built-in Kotlin support (AGP 9.0+ no longer uses a separate
 # org.jetbrains.kotlin.android plugin) — the compose/serialization
