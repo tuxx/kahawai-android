@@ -186,6 +186,7 @@ fun PlayerScreen(
     initialAudioTrack: Int = -1,
     initialSubtitleTrackId: Long? = null,
     libraryId: String? = null,
+    prefetch: PlaybackPrefetch? = null,
 ) {
     val context = LocalContext.current
     val application = context.applicationContext as Application
@@ -194,7 +195,7 @@ fun PlayerScreen(
         key = itemId,
         factory = viewModelFactory {
             initializer {
-                PlayerViewModel(application, repo, itemId, startMs, initialAudioTrack, initialSubtitleTrackId, libraryId)
+                PlayerViewModel(application, repo, itemId, startMs, initialAudioTrack, initialSubtitleTrackId, libraryId, prefetch)
             }
         },
     )

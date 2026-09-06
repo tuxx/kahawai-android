@@ -76,6 +76,7 @@ import com.kolktech.kahawai.data.repository.CatalogRepository
 import com.kolktech.kahawai.ui.components.ErrorView
 import com.kolktech.kahawai.ui.components.OnResumeEffect
 import com.kolktech.kahawai.ui.components.WatchProgressBar
+import com.kolktech.kahawai.ui.player.PlaybackPrefetch
 import com.kolktech.kahawai.util.formatDurationCoarse
 import com.kolktech.kahawai.util.formatEndsAt
 
@@ -105,7 +106,7 @@ fun DetailScreen(
     libraryId: String?,
     repo: CatalogRepository,
     onOpenItem: (itemId: String, libraryId: String?) -> Unit,
-    onPlay: (itemId: String, startMs: Long, audioTrack: Int, subtitleTrackId: Long?) -> Unit,
+    onPlay: (itemId: String, startMs: Long, audioTrack: Int, subtitleTrackId: Long?, prefetch: PlaybackPrefetch) -> Unit,
     onBack: () -> Unit,
     onSessionExpired: () -> Unit,
 ) {
@@ -212,7 +213,7 @@ private fun DetailContent(
     libraryId: String?,
     repo: CatalogRepository,
     onOpenItem: (itemId: String, libraryId: String?) -> Unit,
-    onPlay: (itemId: String, startMs: Long, audioTrack: Int, subtitleTrackId: Long?) -> Unit,
+    onPlay: (itemId: String, startMs: Long, audioTrack: Int, subtitleTrackId: Long?, prefetch: PlaybackPrefetch) -> Unit,
     onSelectAudioTrack: (Int) -> Unit,
     onSelectSubtitleTrack: (SubtitleTrack?) -> Unit,
     onToggleWatched: () -> Unit,
@@ -372,7 +373,7 @@ private fun DetailInfo(
     selectedSubtitleTrack: SubtitleTrack?,
     onSelectAudioTrack: (Int) -> Unit,
     onSelectSubtitleTrack: (SubtitleTrack?) -> Unit,
-    onPlay: (itemId: String, startMs: Long, audioTrack: Int, subtitleTrackId: Long?) -> Unit,
+    onPlay: (itemId: String, startMs: Long, audioTrack: Int, subtitleTrackId: Long?, prefetch: PlaybackPrefetch) -> Unit,
     onToggleWatched: () -> Unit,
     watchedActionInFlight: Boolean,
     playButtonFocusRequester: FocusRequester,
@@ -410,19 +411,23 @@ private fun DetailInfo(
 
     if (detail.kind !in NOT_DIRECTLY_PLAYABLE) {
         val resumeMs = detail.resumePositionMs ?: 0
+        // What PlayerViewModel would otherwise spend its own itemQuery
+        // round trip re-deriving — this screen already has it (see
+        // PlaybackPrefetch).
+        val prefetch = PlaybackPrefetch(subtitleTracks, detail.segments, detail.chapters, detail.parentId)
         Row(
             modifier = Modifier.padding(top = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Button(
-                onClick = { onPlay(detail.id, resumeMs, selectedAudioTrackIndex, selectedSubtitleTrack?.id) },
+                onClick = { onPlay(detail.id, resumeMs, selectedAudioTrackIndex, selectedSubtitleTrack?.id, prefetch) },
                 modifier = Modifier.focusRequester(playButtonFocusRequester).dpadFocusBorder(),
             ) {
                 Text(stringResource(if (resumeMs > 0) R.string.detail_resume else R.string.detail_play))
             }
             if (resumeMs > 0) {
                 OutlinedButton(
-                    onClick = { onPlay(detail.id, 0, selectedAudioTrackIndex, selectedSubtitleTrack?.id) },
+                    onClick = { onPlay(detail.id, 0, selectedAudioTrackIndex, selectedSubtitleTrack?.id, prefetch) },
                     modifier = Modifier.dpadFocusBorder(),
                 ) {
                     Text(stringResource(R.string.detail_start_over))
@@ -462,7 +467,7 @@ private fun DetailInfo(
         if (detail.chapters.isNotEmpty()) {
             ChaptersList(
                 chapters = detail.chapters,
-                onPlayChapter = { startMs -> onPlay(detail.id, startMs, selectedAudioTrackIndex, selectedSubtitleTrack?.id) },
+                onPlayChapter = { startMs -> onPlay(detail.id, startMs, selectedAudioTrackIndex, selectedSubtitleTrack?.id, prefetch) },
                 modifier = Modifier.padding(top = 16.dp),
             )
         }
