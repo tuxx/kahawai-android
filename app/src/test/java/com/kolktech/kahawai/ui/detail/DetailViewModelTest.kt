@@ -10,7 +10,7 @@ import com.kolktech.kahawai.playback.CapabilityProfileBuilder
 import com.kolktech.kahawai.testutil.MainDispatcherRule
 import com.kolktech.kahawai.testutil.buildTestApiService
 import com.kolktech.kahawai.testutil.relaxedApplication
-import io.mockk.every
+import io.mockk.coEvery
 import io.mockk.mockkObject
 import io.mockk.unmockkObject
 import kotlinx.coroutines.test.runTest
@@ -48,7 +48,7 @@ class DetailViewModelTest {
         server = MockWebServer()
         server.start()
         mockkObject(CapabilityProfileBuilder)
-        every { CapabilityProfileBuilder.build(any()) } returns profile
+        coEvery { CapabilityProfileBuilder.build(any()) } returns profile
     }
 
     @After
