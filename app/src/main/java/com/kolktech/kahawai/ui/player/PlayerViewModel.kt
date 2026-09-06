@@ -773,6 +773,7 @@ class PlayerViewModel(
             /// (a plain post-prepare() call would silently see no groups yet).
             override fun onTracksChanged(tracks: Tracks) {
                 applySubtitleTrackSelectionOverride()
+                applyAudioTrackSelectionOverride()
                 _hdrActive.value = isHdrTransfer(selectedVideoFormat(tracks))
             }
         })
@@ -1588,6 +1589,34 @@ class PlayerViewModel(
             if (group != null) params.addOverride(TrackSelectionOverride(group.mediaTrackGroup, 0))
         }
         realPlayer.trackSelectionParameters = params.build()
+    }
+
+    /// A "direct" session serves the file byte-for-byte with every
+    /// embedded audio track intact — there's no server-side remux to
+    /// pick one, unlike a remux/transcode session where the hub already
+    /// produced exactly the requested stream and ExoPlayer only ever
+    /// sees the one audio track to begin with. Left alone,
+    /// DefaultTrackSelector picks its own default (the container's
+    /// first track, or whichever carries the DEFAULT selection flag) —
+    /// entirely independent of [audioTrack], which is how a title
+    /// resolved to English in the Detail/player picker could start
+    /// playing its second (e.g. Portuguese) track instead. Ordinal, not
+    /// language-matched: [audioTrack] is already a plain stream index
+    /// into the same per-source stream list the hub uses for a
+    /// remux/transcode session's own selection (resolveAudioTrack,
+    /// StartSessionRequest.audioTrack), and container demuxers expose
+    /// track groups in that same file order. A no-op for a non-direct
+    /// session, where exactly one audio group exists and it's already
+    /// the right one.
+    private fun applyAudioTrackSelectionOverride() {
+        if (!isDirect) return
+        val group = realPlayer.currentTracks.groups
+            .filter { it.type == C.TRACK_TYPE_AUDIO }
+            .getOrNull(audioTrack) ?: return
+        realPlayer.trackSelectionParameters = realPlayer.trackSelectionParameters.buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+            .addOverride(TrackSelectionOverride(group.mediaTrackGroup, 0))
+            .build()
     }
 
     /// null clears selection ("Off"). Text-delivery switches are instant
