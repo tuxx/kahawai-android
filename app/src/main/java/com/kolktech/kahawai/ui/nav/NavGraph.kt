@@ -34,6 +34,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.kolktech.kahawai.KahawaiApp
 import kotlinx.coroutines.launch
+import com.kolktech.kahawai.data.network.apiJson
 import com.kolktech.kahawai.data.repository.AuthRepository
 import com.kolktech.kahawai.data.repository.CatalogRepository
 import com.kolktech.kahawai.ui.admin.AdminScreen
@@ -41,6 +42,7 @@ import com.kolktech.kahawai.ui.detail.DetailScreen
 import com.kolktech.kahawai.ui.home.HomeScreen
 import com.kolktech.kahawai.ui.library.LibraryScreen
 import com.kolktech.kahawai.ui.login.LoginScreen
+import com.kolktech.kahawai.ui.player.PlaybackPrefetch
 import com.kolktech.kahawai.ui.player.PlayerScreen
 import com.kolktech.kahawai.ui.search.SearchScreen
 import com.kolktech.kahawai.ui.settings.AboutScreen
@@ -78,7 +80,8 @@ private object Routes {
     const val LIBRARY = "library/{libraryId}?name={name}"
     const val DETAIL = "detail/{itemId}?library={library}"
     const val PLAYER =
-        "player/{itemId}?startMs={startMs}&audioTrack={audioTrack}&subtitleTrack={subtitleTrack}&library={library}"
+        "player/{itemId}?startMs={startMs}&audioTrack={audioTrack}&subtitleTrack={subtitleTrack}" +
+            "&library={library}&prefetch={prefetch}"
     fun library(libraryId: String, name: String) = "library/$libraryId?name=${Uri.encode(name)}"
     /// [libraryId] is navigation context, carried the way the web client
     /// carries it in the URL: an item's own detail response doesn't name a
@@ -86,9 +89,17 @@ private object Routes {
     /// are keyed by (see TrackChoice). Empty when the row it was opened
     /// from didn't name one either.
     fun detail(itemId: String, libraryId: String?) = "detail/$itemId?library=${libraryId.orEmpty()}"
-    fun player(itemId: String, startMs: Long, audioTrack: Int, subtitleTrackId: Long?, libraryId: String?) =
+    /// [prefetch] rides along only from a Detail-screen Play press, which
+    /// already ran the QUERY this saves the player from repeating (see
+    /// PlaybackPrefetch) — null for auto-advance/"<"/">, which have no
+    /// such lead time and fall back to the player querying it itself.
+    /// Kept last in the query string and JSON-then-percent-encoded as a
+    /// whole so its own `&`/`=` characters can never be mistaken for a
+    /// route delimiter.
+    fun player(itemId: String, startMs: Long, audioTrack: Int, subtitleTrackId: Long?, libraryId: String?, prefetch: PlaybackPrefetch? = null) =
         "player/$itemId?startMs=$startMs&audioTrack=$audioTrack&subtitleTrack=${subtitleTrackId ?: -1}" +
-            "&library=${libraryId.orEmpty()}"
+            "&library=${libraryId.orEmpty()}" +
+            "&prefetch=${prefetch?.let { Uri.encode(apiJson.encodeToString(PlaybackPrefetch.serializer(), it)) }.orEmpty()}"
 }
 
 @Composable
@@ -348,8 +359,8 @@ fun KahawaiNavGraph(app: KahawaiApp, modifier: Modifier = Modifier) {
                 libraryId = libraryId,
                 repo = catalogRepository,
                 onOpenItem = { childId, childLibraryId -> navController.navigate(Routes.detail(childId, childLibraryId)) },
-                onPlay = { playId, startMs, audioTrack, subtitleTrackId ->
-                    navController.navigate(Routes.player(playId, startMs, audioTrack, subtitleTrackId, libraryId))
+                onPlay = { playId, startMs, audioTrack, subtitleTrackId, prefetch ->
+                    navController.navigate(Routes.player(playId, startMs, audioTrack, subtitleTrackId, libraryId, prefetch))
                 },
                 onBack = { navController.popBackStack() },
                 onSessionExpired = onSessionExpired,
@@ -363,6 +374,7 @@ fun KahawaiNavGraph(app: KahawaiApp, modifier: Modifier = Modifier) {
                 navArgument("audioTrack") { type = NavType.IntType; defaultValue = -1 },
                 navArgument("subtitleTrack") { type = NavType.LongType; defaultValue = -1L },
                 navArgument("library") { type = NavType.StringType; defaultValue = "" },
+                navArgument("prefetch") { type = NavType.StringType; defaultValue = "" },
             ),
         ) { backStackEntry ->
             val itemId = backStackEntry.arguments?.getString("itemId") ?: return@composable
@@ -372,6 +384,12 @@ fun KahawaiNavGraph(app: KahawaiApp, modifier: Modifier = Modifier) {
             // An episode is in the same library as the one that opened it,
             // so this rides the whole way through a binge (see Routes.detail).
             val libraryId = backStackEntry.arguments?.getString("library")?.takeIf { it.isNotEmpty() }
+            // Absent for auto-advance/"<"/">" (see Routes.player) — falls
+            // back to null, which PlayerViewModel already treats as "query
+            // it myself".
+            val prefetch = backStackEntry.arguments?.getString("prefetch")?.takeIf { it.isNotEmpty() }?.let {
+                runCatching { apiJson.decodeFromString(PlaybackPrefetch.serializer(), it) }.getOrNull()
+            }
             PlayerScreen(
                 itemId = itemId,
                 startMs = startMs,
@@ -379,6 +397,7 @@ fun KahawaiNavGraph(app: KahawaiApp, modifier: Modifier = Modifier) {
                 initialAudioTrack = audioTrack,
                 initialSubtitleTrackId = subtitleTrack.takeIf { it >= 0 },
                 libraryId = libraryId,
+                prefetch = prefetch,
                 onClose = { navController.popBackStack() },
                 // Replaces both the current (just-finished) player entry
                 // AND its episode's detail entry with the NEXT episode's

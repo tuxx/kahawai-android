@@ -370,6 +370,12 @@ class PlayerViewModel(
     /// item's own detail doesn't name one, and without it the account's
     /// per-media-type track lists can't be found at all — see TrackChoice.
     private val libraryId: String? = null,
+    /// See [PlaybackPrefetch]: the Detail screen's own itemQuery, reused
+    /// here instead of repeated. Null for a navigation that skipped
+    /// Detail (auto-advance, the in-player "<"/">" buttons), in which
+    /// case start() queries it itself exactly as it did before this
+    /// existed.
+    private val prefetch: PlaybackPrefetch? = null,
     private val catalogRepo: CatalogRepository = CatalogRepository(),
     private val prefsRepo: PreferencesRepository = PreferencesRepository(),
 ) : AndroidViewModel(application) {
@@ -860,79 +866,101 @@ class PlayerViewModel(
         viewModelScope.launch {
             try {
                 val profile = CapabilityProfileBuilder.build(getApplication())
-                // Resolved BEFORE startSession, not alongside it: the
-                // request below may only carry subtitle_track for a
-                // BURN-delivery pick (see the burnPickOrNull note), and
-                // delivery is only knowable from this list. Best-effort:
-                // a failure here means no subtitle picker entries and no
-                // skip/chapter marks, not a broken playback session, so
-                // it's swallowed rather than failing the whole start().
-                // One QUERY carries all three (HUB-37: "the subtitle
-                // listing above rides along for the same reason").
-                // Both best-effort and both started before the QUERY they
-                // overlap: a preference that failed to load costs the
-                // remembered subtitle pick, not the session.
-                val prefs = async { runCatching { prefsRepo.all() }.getOrDefault(emptyList()) }
-                // Lazy, unlike the preferences beside it: the media type only
-                // matters for the account's per-type list, which most titles
-                // never reach (see needsMediaType).
-                val libraries = async(start = CoroutineStart.LAZY) {
-                    runCatching { catalogRepo.libraries() }.getOrDefault(emptyList())
-                }
-                suspend fun mediaType(known: List<Pref>): String =
-                    if (needsMediaType(known) && libraryId != null) {
-                        libraries.await().firstOrNull { it.id == libraryId }?.mediaType ?: ""
-                    } else {
-                        ""
+                val tracks: List<SubtitleTrack>
+                val initialTrack: SubtitleTrack?
+                val prefetched = prefetch
+                if (prefetched != null) {
+                    // The Detail screen already ran this exact QUERY (and
+                    // the same preference resolution, for both audio and
+                    // subtitle — see DetailViewModel.load()) before the
+                    // user ever pressed Play. Reusing it here means
+                    // startSession below is the FIRST network call this
+                    // screen makes, not the second — no itemQuery round
+                    // trip in front of it. initialAudioTrack/
+                    // initialSubtitleTrackId already carry what Detail
+                    // resolved (see PlaybackPrefetch), so there's no
+                    // preference fallback to fall through to here — unlike
+                    // the no-prefetch branch below, an id that doesn't
+                    // match is exactly "no subtitle", not "unresolved".
+                    tracks = prefetched.subtitleTracks
+                    _subtitleTracks.value = tracks
+                    _segments.value = prefetched.segments
+                    _chapters.value = prefetched.chapters
+                    seriesId = prefetched.parentId ?: itemId
+                    initialTrack = tracks.firstOrNull { it.id == initialSubtitleTrackId }
+                } else {
+                    // No prefetch (auto-advance, the in-player "<"/">"
+                    // buttons) — resolved BEFORE startSession, not
+                    // alongside it: the request below may only carry
+                    // subtitle_track for a BURN-delivery pick (see the
+                    // burnPickOrNull note), and delivery is only knowable
+                    // from this list. Best-effort: a failure here means no
+                    // subtitle picker entries and no skip/chapter marks,
+                    // not a broken playback session, so it's swallowed
+                    // rather than failing the whole start(). One QUERY
+                    // carries all three (HUB-37: "the subtitle listing
+                    // above rides along for the same reason"). Both
+                    // best-effort and both started before the QUERY they
+                    // overlap: a preference that failed to load costs the
+                    // remembered subtitle pick, not the session.
+                    val prefs = async { runCatching { prefsRepo.all() }.getOrDefault(emptyList()) }
+                    // Lazy, unlike the preferences beside it: the media
+                    // type only matters for the account's per-type list,
+                    // which most titles never reach (see needsMediaType).
+                    val libraries = async(start = CoroutineStart.LAZY) {
+                        runCatching { catalogRepo.libraries() }.getOrDefault(emptyList())
                     }
-                val queried = try {
-                    repo.itemQuery(itemId, profile)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to query item=$itemId for subtitles/segments/chapters", e)
-                    null
-                }
-                val tracks = queried?.negotiated?.subtitles ?: emptyList()
-                _subtitleTracks.value = tracks
-                _segments.value = queried?.segments ?: emptyList()
-                _chapters.value = queried?.chapters ?: emptyList()
-                // The scope a pick is remembered under (HUB-33): the show,
-                // so every episode of it opens the same way. Falls back to
-                // this item's own id — which is what a film's scope is
-                // anyway, and all an episode whose QUERY failed can offer.
-                seriesId = queried?.parentId ?: itemId
-                // The Detail screen only carries the chosen track's id
-                // through nav args; resolve it against the list once
-                // it's loaded so the picker UI and text-delivery override
-                // both see a real SubtitleTrack, not just its id.
-                //
-                // Nothing carried, or an id this item doesn't have, falls
-                // to the remembered preferences. The second case is the
-                // one that matters: auto-advance carries the track id of
-                // the episode that just ended, and ids don't survive the
-                // file boundary — which is exactly what the series-scoped
-                // language memory is for.
-                if (initialAudioTrack < 0) {
-                    audioTrack = prefs.await().let { known ->
-                        resolveAudioTrack(
-                            prefs = known,
-                            seriesId = seriesId ?: itemId,
-                            itemId = itemId,
-                            mediaType = mediaType(known),
-                            originalLanguage = queried?.metadata?.originalLanguage,
-                            audio = queried?.sources?.firstOrNull()?.streams?.audio ?: emptyList(),
-                        )
+                    suspend fun mediaType(known: List<Pref>): String =
+                        if (needsMediaType(known) && libraryId != null) {
+                            libraries.await().firstOrNull { it.id == libraryId }?.mediaType ?: ""
+                        } else {
+                            ""
+                        }
+                    val queried = try {
+                        repo.itemQuery(itemId, profile)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to query item=$itemId for subtitles/segments/chapters", e)
+                        null
                     }
-                }
-                val initialTrack = tracks.firstOrNull { it.id == initialSubtitleTrackId }
-                    ?: prefs.await().let { known ->
-                        resolveSubtitleTrack(
-                            prefs = known,
-                            seriesId = seriesId ?: itemId,
-                            itemId = itemId,
-                            mediaType = mediaType(known),
-                            tracks = tracks,
-                        )
+                    tracks = queried?.negotiated?.subtitles ?: emptyList()
+                    _subtitleTracks.value = tracks
+                    _segments.value = queried?.segments ?: emptyList()
+                    _chapters.value = queried?.chapters ?: emptyList()
+                    // The scope a pick is remembered under (HUB-33): the
+                    // show, so every episode of it opens the same way.
+                    // Falls back to this item's own id — which is what a
+                    // film's scope is anyway, and all an episode whose
+                    // QUERY failed can offer.
+                    seriesId = queried?.parentId ?: itemId
+                    // Nothing carried, or an id this item doesn't have,
+                    // falls to the remembered preferences. The second case
+                    // is the one that matters: auto-advance carries the
+                    // track id of the episode that just ended, and ids
+                    // don't survive the file boundary — which is exactly
+                    // what the series-scoped language memory is for.
+                    if (initialAudioTrack < 0) {
+                        audioTrack = prefs.await().let { known ->
+                            resolveAudioTrack(
+                                prefs = known,
+                                seriesId = seriesId ?: itemId,
+                                itemId = itemId,
+                                mediaType = mediaType(known),
+                                originalLanguage = queried?.metadata?.originalLanguage,
+                                audio = queried?.sources?.firstOrNull()?.streams?.audio ?: emptyList(),
+                            )
+                        }
                     }
+                    initialTrack = tracks.firstOrNull { it.id == initialSubtitleTrackId }
+                        ?: prefs.await().let { known ->
+                            resolveSubtitleTrack(
+                                prefs = known,
+                                seriesId = seriesId ?: itemId,
+                                itemId = itemId,
+                                mediaType = mediaType(known),
+                                tracks = tracks,
+                            )
+                        }
+                }
                 _selectedSubtitleTrack.value = initialTrack
                 // Logged like the session start below: which track a title
                 // opens with is preference resolution across three scopes
@@ -940,7 +968,7 @@ class PlayerViewModel(
                 // visible from the outcome alone.
                 Log.d(
                     TAG,
-                    "tracks resolved item=$itemId series=$seriesId library=$libraryId " +
+                    "tracks resolved item=$itemId series=$seriesId library=$libraryId prefetched=${prefetched != null} " +
                         "audio=$audioTrack subtitle=${initialTrack?.id} (carried sub=$initialSubtitleTrackId)",
                 )
                 // See startSessionAndAttach's doc for the offsetMs/

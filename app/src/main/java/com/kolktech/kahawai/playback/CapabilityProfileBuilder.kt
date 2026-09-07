@@ -18,6 +18,8 @@ import androidx.media3.exoplayer.audio.AudioCapabilities
 import com.kolktech.kahawai.data.network.dto.CapabilityProfile
 import com.kolktech.kahawai.data.network.dto.TargetDuration
 import com.kolktech.kahawai.data.network.dto.VideoCap
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -61,7 +63,13 @@ object CapabilityProfileBuilder {
         "truehd" to listOf(MimeTypes.AUDIO_TRUEHD),
     )
 
-    fun build(context: Context): CapabilityProfile {
+    /// MediaCodecList enumeration in particular is a real, synchronous
+    /// probe of every codec the platform has registered — TV boxes with a
+    /// lot of installed decoders can take a noticeable stretch over it —
+    /// so this is pushed off Dispatchers.Main (every call site runs it
+    /// from a coroutine already) rather than paid on the UI thread right
+    /// as the user presses Play.
+    suspend fun build(context: Context): CapabilityProfile = withContext(Dispatchers.Default) {
         val decodedMimes = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
             .asSequence()
             .filter { !it.isEncoder }
@@ -84,7 +92,7 @@ object CapabilityProfileBuilder {
             ?.getDisplay(Display.DEFAULT_DISPLAY)
         val hdr = display?.let(::supportsHdr) == true
 
-        return CapabilityProfile(
+        CapabilityProfile(
             containers = listOf("mp4", "matroska"),
             video = video,
             audio = audioSupport.codecs,
