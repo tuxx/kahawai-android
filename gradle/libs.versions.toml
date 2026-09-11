@@ -4,7 +4,7 @@ agp = "9.4.0"
 # built-in Kotlin support (AGP 9.0+ no longer uses a separate
 # org.jetbrains.kotlin.android plugin) — the compose/serialization
 # compiler plugins must match it exactly or compilation fails.
-kotlin = "2.4.10"
+kotlin = "2.4.20"
 coreKtx = "1.19.0"
 lifecycle = "2.11.0"
 activityCompose = "1.13.0"
