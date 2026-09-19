@@ -54,6 +54,7 @@ import com.kolktech.kahawai.data.repository.PreferencesRepository
 import com.kolktech.kahawai.playback.CapabilityProfileBuilder
 import com.kolktech.kahawai.playback.IMAGE_FORMATS
 import com.kolktech.kahawai.playback.PREF_AUDIO
+import com.kolktech.kahawai.playback.SessionKeepalive
 import com.kolktech.kahawai.playback.langEq
 import com.kolktech.kahawai.playback.needsMediaType
 import com.kolktech.kahawai.playback.rememberedAudioValue
@@ -107,9 +108,21 @@ data class SubtitleSession(
     val epoch: Int,
 )
 
-/// Progress cadence matches the web client (web/src/views/Player.tsx:678-710):
-/// every 10s while playing, plus on pause and on teardown.
+/// Progress cadence matches the web client: every 10s, plus on pause and on
+/// teardown.
 private const val PROGRESS_INTERVAL_MS = 10_000L
+
+/// How long the ping keeps going once the playhead stops moving — the bound
+/// on [PROGRESS_INTERVAL_MS], ported from web/src/domain/keepalive.ts.
+///
+/// The hub reaps a session after 90s with no fetch and no progress ping
+/// (HUB-18), which is right for an abandoned session and wrong for a present
+/// one: a player stops fetching far more often than it stops existing, and a
+/// pause with a full buffer reads no bytes at all. So the ping is a liveness
+/// signal and goes out whether or not the playhead is moving — but bounded,
+/// because the reaper is right about the case it was built for. Someone who
+/// paused and walked away must not hold a transcoder slot all night.
+private const val IDLE_PING_LIMIT_MS = 30 * 60_000L
 
 /// How long onBackgrounded() waits before actually stopping the player —
 /// see its doc for why this is debounced rather than immediate.
@@ -1853,6 +1866,7 @@ class PlayerViewModel(
     private fun startProgressLoop() {
         progressJob?.cancel()
         progressJob = viewModelScope.launch {
+            val keepalive = SessionKeepalive(PROGRESS_INTERVAL_MS, IDLE_PING_LIMIT_MS)
             while (isActive) {
                 delay(PROGRESS_INTERVAL_MS)
                 // Diagnostic: onPlaybackStateChanged only logs on
@@ -1883,7 +1897,15 @@ class PlayerViewModel(
                 // buffering, exactly like `!paused`, and only goes false
                 // on the explicit pause() handleSeek() already does
                 // before restarting.
-                if (realPlayer.playWhenReady) reportProgressNow()
+                // NOT gated on playWhenReady any more. That gate matched the
+                // web client's old `if (!video.paused) report()`, and it is
+                // what let a pause longer than the hub's 90s idle timeout
+                // reap the session out from under a viewer who was still
+                // there — after which every report 404s and the watched time
+                // is lost. A direct session hides that completely: its
+                // transfer is already open and keeps delivering bytes, so
+                // playback continues perfectly while nothing is recorded.
+                if (keepalive.shouldPing(offsetMs + realPlayer.currentPosition)) reportProgressNow()
             }
         }
     }
