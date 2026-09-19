@@ -54,7 +54,7 @@ import com.kolktech.kahawai.ui.components.PosterCard
 @Composable
 fun SearchScreen(
     repo: CatalogRepository,
-    onOpenItem: (itemId: String, libraryId: String?) -> Unit,
+    onOpenItem: (itemId: String, libraryId: String) -> Unit,
     onBack: () -> Unit,
     onSessionExpired: () -> Unit,
 ) {

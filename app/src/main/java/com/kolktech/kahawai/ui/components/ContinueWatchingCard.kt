@@ -91,7 +91,7 @@ fun ContinueWatchingCard(
                 ),
         ) {
             AsyncImage(
-                model = repo.artworkUrl(item.id, item.artVersion, "card"),
+                model = repo.artworkUrl(item.libraryId, item.id, "card"),
                 contentDescription = item.title,
                 contentScale = ContentScale.Crop,
                 // Same fallback whether the poster is still loading or the

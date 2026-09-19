@@ -26,7 +26,8 @@ class KahawaiApp : Application(), SingletonImageLoader.Factory {
         ApiClient.init(tokenStore, serverConfigStore)
     }
 
-    /// Artwork (GET /api/v1/items/{id}/artwork) requires the same bearer
+    /// Artwork (GET /api/v1/catalogue/libraries/{id}/items/{item}/artwork)
+    /// requires the same bearer
     /// token as everything else — it is not a public URL — so Coil's
     /// network layer has to ride the app's authenticated OkHttpClient
     /// rather than build its own.

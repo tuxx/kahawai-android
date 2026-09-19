@@ -223,6 +223,7 @@
     <string name="player_playback_failed">Playback failed: %1$s</string>
     <string name="player_seek_failed">Seek failed: %1$s</string>
     <string name="player_subtitle_switch_failed">Failed to switch subtitle: %1$s</string>
+    <string name="player_audio_switch_failed">Failed to switch audio: %1$s</string>
 
     <!-- HUB-37: recap/intro/credits skip button -->
     <string name="player_skip_recap">Skip recap</string>

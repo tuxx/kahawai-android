@@ -39,7 +39,7 @@ class LibraryViewModelTest {
     fun `load succeeds and requests the given library`() = runTest {
         server.enqueue(
             MockResponse().setBody(
-                """{"items":[{"id":"i1","kind":"movie","title":"Arrival"}],"total":1,"limit":40,"offset":0}""",
+                """{"items":[{"id":"i1","kind":"movie","media_type":"movies","title":"Arrival","representative_id":"c1:1","copy_ids":["c1:1"],"metadata":{"description":{},"provenance":{}},"played":false}],"total":1,"limit":40,"offset":0}""",
             ),
         )
 
@@ -51,7 +51,7 @@ class LibraryViewModelTest {
             val loaded = item as LibraryState.Loaded
             assertEquals(1, loaded.items.size)
         }
-        assertTrue(server.takeRequest().path!!.contains("library=lib1"))
+        assertTrue(server.takeRequest().path!!.startsWith("/api/v1/catalogue/libraries/lib1/items"))
     }
 
     @Test
@@ -73,7 +73,7 @@ class LibraryViewModelTest {
         server.enqueue(
             MockResponse().setBody(
                 """
-                {"items":[{"id":"i1","kind":"movie","title":"One"},{"id":"i2","kind":"movie","title":"Two"}],
+                {"items":[{"id":"i1","kind":"movie","media_type":"movies","title":"One","representative_id":"c1:1","copy_ids":["c1:1"],"metadata":{"description":{},"provenance":{}},"played":false},{"id":"i2","kind":"movie","media_type":"movies","title":"Two","representative_id":"c1:1","copy_ids":["c1:1"],"metadata":{"description":{},"provenance":{}},"played":false}],
                  "total":3,"limit":40,"offset":0}
                 """.trimIndent(),
             ),
@@ -88,7 +88,7 @@ class LibraryViewModelTest {
 
             server.enqueue(
                 MockResponse().setBody(
-                    """{"items":[{"id":"i3","kind":"movie","title":"Three"}],"total":3,"limit":40,"offset":2}""",
+                    """{"items":[{"id":"i3","kind":"movie","media_type":"movies","title":"Three","representative_id":"c1:1","copy_ids":["c1:1"],"metadata":{"description":{},"provenance":{}},"played":false}],"total":3,"limit":40,"offset":2}""",
                 ),
             )
             viewModel.loadMore()
@@ -106,7 +106,7 @@ class LibraryViewModelTest {
     fun `loadMore is a no-op once every item is already loaded`() = runTest {
         server.enqueue(
             MockResponse().setBody(
-                """{"items":[{"id":"i1","kind":"movie","title":"One"}],"total":1,"limit":40,"offset":0}""",
+                """{"items":[{"id":"i1","kind":"movie","media_type":"movies","title":"One","representative_id":"c1:1","copy_ids":["c1:1"],"metadata":{"description":{},"provenance":{}},"played":false}],"total":1,"limit":40,"offset":0}""",
             ),
         )
         val viewModel = LibraryViewModel(repo(), libraryId = "lib1")

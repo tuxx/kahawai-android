@@ -49,7 +49,7 @@ class SearchViewModel(private val repo: CatalogRepository) : ViewModel() {
         }
         _state.value = SearchState.Loading
         try {
-            val result = repo.items(q = q, limit = RESULT_LIMIT)
+            val result = repo.search(q, limit = RESULT_LIMIT)
             _state.value = SearchState.Loaded(result.items, result.total)
         } catch (e: Exception) {
             _state.value = SearchState.Error(e.readableMessage(), e.isAuthError())
@@ -77,7 +77,7 @@ class SearchViewModel(private val repo: CatalogRepository) : ViewModel() {
         if (_state.value !is SearchState.Loaded || q.isBlank()) return
         viewModelScope.launch {
             try {
-                val result = repo.items(q = q, limit = RESULT_LIMIT)
+                val result = repo.search(q, limit = RESULT_LIMIT)
                 _state.value = SearchState.Loaded(result.items, result.total)
             } catch (e: Exception) {
                 // Keep showing the results we have.

@@ -2,6 +2,7 @@ package com.kolktech.kahawai.data.repository
 
 import com.kolktech.kahawai.data.network.ApiClient
 import com.kolktech.kahawai.testutil.buildTestAdminApiService
+import com.kolktech.kahawai.testutil.buildTestApiService
 import io.mockk.every
 import io.mockk.mockkObject
 import io.mockk.unmockkObject
@@ -31,6 +32,9 @@ class AdminRepositoryTest {
         repository = AdminRepository()
         mockkObject(ApiClient)
         every { ApiClient.adminApiService() } returns buildTestAdminApiService(server)
+        // Library listing is the client-facing catalogue route now, so this
+        // repository reaches for both services.
+        every { ApiClient.apiService() } returns buildTestApiService(server)
     }
 
     @After
@@ -109,31 +113,38 @@ class AdminRepositoryTest {
         assertTrue(recorded.body.readUtf8().contains("\"disabled\":false"))
     }
 
+    /// The admin surface has no library listing of its own any more: the
+    /// client-facing catalogue route carries `collection_ids`.
     @Test
-    fun `libraries unwraps envelope and hits GET path`() = runTest {
+    fun `libraries reads the client-facing catalogue route`() = runTest {
         server.enqueue(
-            MockResponse().setBody("""{"libraries":[{"id":"lib1","name":"Movies","media_type":"video"}]}"""),
+            MockResponse().setBody(
+                """[{"id":"lib1","name":"Movies","media_type":"movies","collection_ids":["c1"]}]""",
+            ),
         )
 
         val result = repository.libraries()
 
         assertEquals(1, result.size)
         assertEquals("Movies", result[0].name)
-        assertEquals("/admin/v1/libraries", server.takeRequest().path)
+        assertEquals(listOf("c1"), result[0].collectionIds)
+        assertEquals("/api/v1/catalogue/libraries", server.takeRequest().path)
     }
 
     @Test
     fun `createLibrary posts name and mediaType and returns new id`() = runTest {
-        server.enqueue(MockResponse().setBody("""{"id":"lib-9"}"""))
+        server.enqueue(
+            MockResponse().setBody("""{"id":"lib-9","name":"Movies","media_type":"movies","collection_ids":[]}"""),
+        )
 
-        val result = repository.createLibrary("Movies", "video")
+        val result = repository.createLibrary("Movies", "movies")
 
         val recorded = server.takeRequest()
         assertEquals("POST", recorded.method)
-        assertEquals("/admin/v1/libraries", recorded.path)
+        assertEquals("/admin/v1/catalogue/libraries", recorded.path)
         val body = recorded.body.readUtf8()
         assertTrue(body.contains("\"name\":\"Movies\""))
-        assertTrue(body.contains("\"media_type\":\"video\""))
+        assertTrue(body.contains("\"media_type\":\"movies\""))
         assertEquals("lib-9", result)
     }
 
@@ -145,57 +156,55 @@ class AdminRepositoryTest {
 
         val recorded = server.takeRequest()
         assertEquals("DELETE", recorded.method)
-        assertEquals("/admin/v1/libraries/lib1", recorded.path)
+        assertEquals("/admin/v1/catalogue/libraries/lib1", recorded.path)
     }
 
+    /// Membership is SET, not patched — attach and detach are both this
+    /// one call with a different list.
     @Test
-    fun `attachCollection posts moduleId and collectionId`() = runTest {
+    fun `setCollections puts the whole membership`() = runTest {
         server.enqueue(MockResponse().setResponseCode(200))
 
-        repository.attachCollection("lib1", "m1", "c1")
+        repository.setCollections("lib1", listOf("c1", "c2"))
 
         val recorded = server.takeRequest()
-        assertEquals("/admin/v1/libraries/lib1/collections", recorded.path)
-        val body = recorded.body.readUtf8()
-        assertTrue(body.contains("\"module_id\":\"m1\""))
-        assertTrue(body.contains("\"collection_id\":\"c1\""))
-    }
-
-    @Test
-    fun `detachCollection sends DELETE with moduleId and collectionId in the path`() = runTest {
-        server.enqueue(MockResponse().setResponseCode(200))
-
-        repository.detachCollection("lib1", "m1", "c1")
-
-        val recorded = server.takeRequest()
-        assertEquals("DELETE", recorded.method)
-        assertEquals("/admin/v1/libraries/lib1/collections/m1/c1", recorded.path)
+        assertEquals("PUT", recorded.method)
+        assertEquals("/admin/v1/catalogue/libraries/lib1/collections", recorded.path)
+        assertTrue(recorded.body.readUtf8().contains("\"collection_ids\":[\"c1\",\"c2\"]"))
     }
 
     @Test
     fun `refreshLibrary posts and returns asked and offline counts`() = runTest {
-        server.enqueue(MockResponse().setBody("""{"asked":5,"offline":2}"""))
+        server.enqueue(MockResponse().setBody("""{"asked":5,"offline":2,"unsupported":1}"""))
 
         val result = repository.refreshLibrary("lib1")
 
-        assertEquals("POST", server.takeRequest().method)
+        val recorded = server.takeRequest()
+        assertEquals("POST", recorded.method)
+        assertEquals("/admin/v1/catalogue/libraries/lib1/refresh", recorded.path)
         assertEquals(5, result.asked)
         assertEquals(2, result.offline)
+        assertEquals(1, result.unsupported)
     }
 
     @Test
     fun `collections unwraps envelope and hits GET path`() = runTest {
         server.enqueue(
             MockResponse().setBody(
-                """{"collections":[{"module_id":"m1","collection_id":"c1","media_type":"video","connected":true}]}""",
+                """[{"id":"c1","media_type":"movies","mediahost_id":"m1","remote_id":"r1",""" +
+                    """"connected":true,"scanning":false,"snapshot":false,"file_count":12,"version":3,""" +
+                    """"epoch":"e1","roots":[]}]""",
             ),
         )
 
         val result = repository.collections()
 
         assertEquals(1, result.size)
-        assertEquals("c1", result[0].collectionId)
-        assertEquals("/admin/v1/collections", server.takeRequest().path)
+        // A collection is one opaque id now, not a (module, collection) pair.
+        assertEquals("c1", result[0].id)
+        assertEquals("m1", result[0].mediahostId)
+        assertEquals(12, result[0].fileCount)
+        assertEquals("/admin/v1/catalogue/collections", server.takeRequest().path)
     }
 
     @Test
@@ -204,7 +213,7 @@ class AdminRepositoryTest {
             MockResponse().setBody(
                 """
                 {
-                  "tmdb":{"configured":true},"tvdb":{"configured":false},"anidb":{"configured":true},
+                  "tmdb":{"configured":true},"fanart":{"configured":false},"theaudiodb":{"premium_key_configured":false},"tvdb":{"configured":false},"anidb":{"configured":true},
                   "chains":{"video":{"order":["tmdb","tvdb"],"default":["tmdb"]}}
                 }
                 """.trimIndent(),

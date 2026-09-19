@@ -65,18 +65,20 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import coil3.compose.AsyncImage
 import com.kolktech.kahawai.R
-import com.kolktech.kahawai.data.network.dto.AudioStreamInfo
+import com.kolktech.kahawai.data.network.dto.ClientAudioStream
 import com.kolktech.kahawai.data.network.dto.Chapter
 import com.kolktech.kahawai.data.network.dto.Item
 import com.kolktech.kahawai.data.network.dto.ItemDetail
 import com.kolktech.kahawai.data.network.dto.SubtitleTrack
-import com.kolktech.kahawai.data.network.dto.VideoStreamInfo
+import com.kolktech.kahawai.data.network.dto.negotiatedSource
+import com.kolktech.kahawai.data.network.dto.ClientVideoStream
 import com.kolktech.kahawai.data.network.dto.displayLabel
 import com.kolktech.kahawai.data.repository.CatalogRepository
 import com.kolktech.kahawai.ui.components.ErrorView
 import com.kolktech.kahawai.ui.components.OnResumeEffect
 import com.kolktech.kahawai.ui.components.WatchProgressBar
 import com.kolktech.kahawai.ui.player.PlaybackPrefetch
+import com.kolktech.kahawai.ui.player.PrefetchSource
 import com.kolktech.kahawai.util.formatDurationCoarse
 import com.kolktech.kahawai.util.formatEndsAt
 
@@ -103,9 +105,9 @@ fun DetailScreen(
     /// Navigation context from the row this was opened from — the item's
     /// own detail names no library, and its media type is what the
     /// account's track preferences are keyed by (see TrackChoice).
-    libraryId: String?,
+    libraryId: String,
     repo: CatalogRepository,
-    onOpenItem: (itemId: String, libraryId: String?) -> Unit,
+    onOpenItem: (itemId: String, libraryId: String) -> Unit,
     onPlay: (itemId: String, startMs: Long, audioTrack: Int, subtitleTrackId: Long?, prefetch: PlaybackPrefetch) -> Unit,
     onBack: () -> Unit,
     onSessionExpired: () -> Unit,
@@ -210,9 +212,9 @@ fun DetailScreen(
 @Composable
 private fun DetailContent(
     state: DetailState.Loaded,
-    libraryId: String?,
+    libraryId: String,
     repo: CatalogRepository,
-    onOpenItem: (itemId: String, libraryId: String?) -> Unit,
+    onOpenItem: (itemId: String, libraryId: String) -> Unit,
     onPlay: (itemId: String, startMs: Long, audioTrack: Int, subtitleTrackId: Long?, prefetch: PlaybackPrefetch) -> Unit,
     onSelectAudioTrack: (Int) -> Unit,
     onSelectSubtitleTrack: (SubtitleTrack?) -> Unit,
@@ -230,7 +232,9 @@ private fun DetailContent(
     val windowSizeClass = currentWindowAdaptiveInfoV2().windowSizeClass
     val useTwoPane = windowSizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND) ||
         !windowSizeClass.isHeightAtLeastBreakpoint(WindowSizeClass.HEIGHT_DP_MEDIUM_LOWER_BOUND)
-    val primarySource = detail.sources.firstOrNull()
+    // The source negotiation chose, not whichever happens to be listed
+    // first — its streams are what would actually be served.
+    val primarySource = detail.negotiatedSource()
     val audioTracks = primarySource?.streams?.audio.orEmpty()
     val videoStream = primarySource?.streams?.video?.firstOrNull()
     val runtimeMs = primarySource?.streams?.durationMs ?: detail.resumeDurationMs
@@ -258,7 +262,7 @@ private fun DetailContent(
                         .aspectRatio(2f / 3f),
                 ) {
                     AsyncImage(
-                        model = repo.artworkUrl(detail.id, detail.artVersion, "card"),
+                        model = repo.artworkUrl(detail.libraryId, detail.id, "card"),
                         contentDescription = detail.title,
                         contentScale = ContentScale.Crop,
                         placeholder = painterResource(R.drawable.placeholder_poster),
@@ -281,6 +285,7 @@ private fun DetailContent(
                             runtimeMs = runtimeMs,
                             subtitleTracks = state.subtitleTracks,
                             selectedAudioTrackIndex = state.selectedAudioTrackIndex,
+                            sourceId = state.sourceId,
                             selectedSubtitleTrack = state.selectedSubtitleTrack,
                             onSelectAudioTrack = onSelectAudioTrack,
                             onSelectSubtitleTrack = onSelectSubtitleTrack,
@@ -314,7 +319,7 @@ private fun DetailContent(
                             .aspectRatio(16f / 9f),
                     ) {
                         AsyncImage(
-                            model = repo.artworkUrl(detail.id, detail.artVersion),
+                            model = repo.artworkUrl(detail.libraryId, detail.id),
                             contentDescription = detail.title,
                             contentScale = ContentScale.Crop,
                             placeholder = painterResource(R.drawable.placeholder_poster),
@@ -336,6 +341,7 @@ private fun DetailContent(
                             runtimeMs = runtimeMs,
                             subtitleTracks = state.subtitleTracks,
                             selectedAudioTrackIndex = state.selectedAudioTrackIndex,
+                            sourceId = state.sourceId,
                             selectedSubtitleTrack = state.selectedSubtitleTrack,
                             onSelectAudioTrack = onSelectAudioTrack,
                             onSelectSubtitleTrack = onSelectSubtitleTrack,
@@ -365,11 +371,12 @@ private fun DetailContent(
 @Composable
 private fun DetailInfo(
     detail: ItemDetail,
-    audioTracks: List<AudioStreamInfo>,
-    videoStream: VideoStreamInfo?,
+    audioTracks: List<ClientAudioStream>,
+    videoStream: ClientVideoStream?,
     runtimeMs: Long?,
     subtitleTracks: List<SubtitleTrack>,
     selectedAudioTrackIndex: Int,
+    sourceId: Int?,
     selectedSubtitleTrack: SubtitleTrack?,
     onSelectAudioTrack: (Int) -> Unit,
     onSelectSubtitleTrack: (SubtitleTrack?) -> Unit,
@@ -398,7 +405,9 @@ private fun DetailInfo(
         remainingMs?.takeIf { it > 0 }?.let { formatEndsAt(it) },
         videoStream?.resolutionLabel(),
         videoStream?.let { it.codec.uppercase() },
-        videoStream?.hdr?.uppercase(),
+        // The probe no longer reports an HDR label, only the bit depth it
+        // measured. 10-bit is the honest thing to show for it.
+        videoStream?.bitDepth?.takeIf { it > 8 }?.let { "${it}-bit" },
     ).joinToString("  ·  ")
     if (facts.isNotBlank()) {
         Text(facts, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
@@ -414,7 +423,22 @@ private fun DetailInfo(
         // What PlayerViewModel would otherwise spend its own itemQuery
         // round trip re-deriving — this screen already has it (see
         // PlaybackPrefetch).
-        val prefetch = PlaybackPrefetch(subtitleTracks, detail.segments, detail.chapters, detail.parentId)
+        val prefetch = PlaybackPrefetch(
+            subtitleTracks,
+            detail.segments,
+            detail.chapters,
+            detail.parentId,
+            sources = detail.sources.map {
+                PrefetchSource(
+                    sourceId = it.sourceId,
+                    copyId = it.collectionItemId,
+                    mediaEntryId = it.mediaEntryId,
+                    audio = it.streams?.audio.orEmpty(),
+                )
+            },
+            sourceId = sourceId,
+            audioTrack = selectedAudioTrackIndex,
+        )
         Row(
             modifier = Modifier.padding(top = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -480,7 +504,7 @@ private fun DetailInfo(
 
 @Composable
 private fun AudioPicker(
-    tracks: List<AudioStreamInfo>,
+    tracks: List<ClientAudioStream>,
     selectedIndex: Int,
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
@@ -648,17 +672,22 @@ private fun SelectableRow(text: String, selected: Boolean, enabled: Boolean = tr
     }
 }
 
-private fun VideoStreamInfo.resolutionLabel(): String = when {
-    height >= 2160 -> "4K"
-    height >= 1080 -> "1080p"
-    height >= 720 -> "720p"
-    height >= 480 -> "480p"
-    height > 0 -> "${height}p"
-    else -> ""
+/// The hub reports DISPLAY dimensions now — rotation already applied —
+/// so a portrait-flagged file no longer labels itself by its coded height.
+private fun ClientVideoStream.resolutionLabel(): String {
+    val height = displayHeight ?: 0
+    return when {
+        height >= 2160 -> "4K"
+        height >= 1080 -> "1080p"
+        height >= 720 -> "720p"
+        height >= 480 -> "480p"
+        height > 0 -> "${height}p"
+        else -> ""
+    }
 }
 
 @Composable
-private fun AudioStreamInfo.displayLabel(): String {
+private fun ClientAudioStream.displayLabel(): String {
     val channelLabel = when (channels) {
         1 -> stringResource(R.string.channels_mono)
         2 -> stringResource(R.string.channels_stereo)
@@ -694,8 +723,8 @@ private fun ResumeLine(detail: ItemDetail) {
 @Composable
 private fun ChildRow(
     child: Item,
-    onOpenItem: (itemId: String, libraryId: String?) -> Unit,
-    libraryId: String?,
+    onOpenItem: (itemId: String, libraryId: String) -> Unit,
+    libraryId: String,
     focusRequester: FocusRequester? = null,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -731,7 +760,7 @@ private fun ChildRow(
             child.title
         }
         Text(label, style = MaterialTheme.typography.bodyLarge)
-        if (child.playCount > 0 || child.played) {
+        if (child.played) {
             Text(
                 stringResource(R.string.watched),
                 style = MaterialTheme.typography.labelSmall,

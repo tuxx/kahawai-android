@@ -185,7 +185,7 @@ fun PlayerScreen(
     onPreviousEpisode: (itemId: String, subtitleTrackId: Long?) -> Unit = { _, _ -> },
     initialAudioTrack: Int = -1,
     initialSubtitleTrackId: Long? = null,
-    libraryId: String? = null,
+    libraryId: String,
     prefetch: PlaybackPrefetch? = null,
 ) {
     val context = LocalContext.current
@@ -729,7 +729,44 @@ private fun PlayerContent(
     // of TrackSelectionDialogBuilder's modal AlertDialog. Reached through
     // the settings gear menu — portrait screens don't have bottom-bar
     // width for a dedicated audio button.
+    /// A remux/transcode session only ever exposes the single audio stream
+    /// the hub muxed, so ExoPlayer's own track list has nothing to offer.
+    /// The hub's per-source list is what the viewer actually has to choose
+    /// from there, and picking one restarts the pipeline
+    /// (PlayerViewModel.selectAudioTrackIndex).
+    fun showHubAudioTrackMenu(menuContext: Context, anchor: View) {
+        val streams = viewModel.negotiatedAudio()
+        if (streams.size < 2) return
+        PopupMenu(menuContext, anchor).apply {
+            streams.forEachIndexed { index, stream ->
+                val channels = when (stream.channels) {
+                    1 -> menuContext.getString(R.string.channels_mono)
+                    2 -> menuContext.getString(R.string.channels_stereo)
+                    6 -> "5.1"
+                    8 -> "7.1"
+                    else -> null
+                }
+                val label = listOfNotNull(
+                    stream.language?.uppercase(),
+                    stream.codec.uppercase(),
+                    channels,
+                ).joinToString(" · ")
+                menu.add(0, index, index, label)
+            }
+            menu.setGroupCheckable(0, true, true)
+            menu.findItem(viewModel.currentAudioTrack)?.isChecked = true
+            setOnMenuItemClickListener { item ->
+                viewModel.selectAudioTrackIndex(item.itemId)
+                true
+            }
+        }.show()
+    }
+
     fun showAudioTrackMenu(menuContext: Context, anchor: View) {
+        if (!viewModel.isDirect) {
+            showHubAudioTrackMenu(menuContext, anchor)
+            return
+        }
         val groups = viewModel.player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
         if (groups.isEmpty()) return
         val nameProvider = DefaultTrackNameProvider(menuContext.resources)
@@ -851,12 +888,21 @@ private fun PlayerContent(
         PopupMenu(menuContext, anchor).apply {
             menu.add(0, 0, 0, menuContext.getString(R.string.player_settings_video, menuContext.getString(RESIZE_MODES[resizeModeIndex].second)))
             menu.add(0, 1, 1, menuContext.getString(R.string.player_settings_speed, "${speed}x"))
-            if (audioGroups.isNotEmpty()) {
+            val hubAudio = viewModel.negotiatedAudio()
+            val hasAudioChoice =
+                if (viewModel.isDirect) audioGroups.isNotEmpty() else hubAudio.size >= 2
+            val audioLabel = if (viewModel.isDirect) {
+                currentAudio
+            } else {
+                hubAudio.getOrNull(viewModel.currentAudioTrack)
+                    ?.let { listOfNotNull(it.language?.uppercase(), it.codec.uppercase()).joinToString(" · ") }
+            }
+            if (hasAudioChoice) {
                 menu.add(
                     0,
                     2,
                     2,
-                    menuContext.getString(R.string.player_settings_audio, currentAudio ?: menuContext.getString(R.string.default_label)),
+                    menuContext.getString(R.string.player_settings_audio, audioLabel ?: menuContext.getString(R.string.default_label)),
                 )
             }
             setOnMenuItemClickListener { item ->
@@ -1178,7 +1224,6 @@ private fun PlayerContent(
                 "overlay" -> if (!isNativeBitmapPick(selectedSubtitle, isDirect = !activeSession.isHls)) {
                     ImageSubtitleOverlay(
                         player = viewModel.player,
-                        itemId = viewModel.itemId,
                         track = selectedSubtitle!!,
                         subtitleSession = activeSession,
                         resizeMode = RESIZE_MODES[resizeModeIndex].first,

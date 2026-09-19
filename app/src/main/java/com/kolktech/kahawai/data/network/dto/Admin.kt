@@ -3,10 +3,11 @@ package com.kolktech.kahawai.data.network.dto
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/// DTOs for the hub's `/admin/v1/*` surface (crates/kahawai-hub/src/api.rs:109-176),
-/// mirroring the reference web client's types in
-/// `~/code/kahawai/web/src/api.ts:661-874`. Requires the JWT `admin`
-/// claim — see [com.kolktech.kahawai.data.auth.TokenStore.isAdmin].
+/// DTOs for the hub's `/admin/v1/*` surface (crates/kahawai-hub/src/api.rs).
+/// Requires the JWT `admin` claim — see
+/// [com.kolktech.kahawai.data.auth.TokenStore.isAdmin]. Library and
+/// collection administration moved under `/admin/v1/catalogue/*` with the
+/// mediadb rewrite; shapes are authoritative in web/openapi.json.
 
 @Serializable
 data class PendingEnrollment(
@@ -64,6 +65,8 @@ data class Satellite(
     val capabilities: SatelliteCaps? = null,
     val pace: List<PaceRow> = emptyList(),
     val linkBytesPerSec: Long? = null,
+    val build: String? = null,
+    val enrolledAt: Long = 0,
 )
 
 @Serializable
@@ -72,59 +75,51 @@ data class SatellitesResponse(val satellites: List<Satellite>)
 @Serializable
 data class SetDisabledRequest(val disabled: Boolean)
 
+/// A collection is one opaque id now, not a (module, collection) pair: it
+/// is owned by a mediahost (`mediahostId`) and identified there by
+/// `remoteId`, but a library refers to it only by [id].
 @Serializable
-data class AdminLibraryCollection(
-    val moduleId: String,
-    val collectionId: String,
-    val hostName: String? = null,
+data class CatalogueCollection(
+    val id: String,
+    val mediaType: String,
+    val mediahostId: String,
+    val remoteId: String,
+    val connected: Boolean = false,
+    val scanning: Boolean = false,
+    val snapshot: Boolean = false,
+    val fileCount: Int = 0,
+    val version: Int = 0,
+    val epoch: String = "",
+    val roots: List<CatalogueRoot> = emptyList(),
 )
 
-/// "Admin" prefix distinguishes this from the client-facing
-/// [LibrarySummary]/[LibrariesResponse] in Catalog.kt — different shape,
-/// different (admin-only) endpoint.
 @Serializable
-data class AdminLibrary(
+data class CatalogueRoot(
     val id: String,
+    val path: String,
+    val token: String = "",
+    val active: Boolean = false,
+)
+
+@Serializable
+data class CreateLibraryRequest(
     val name: String,
     val mediaType: String,
-    val collections: List<AdminLibraryCollection> = emptyList(),
+    val collectionIds: List<String> = emptyList(),
 )
 
+/// `PUT /admin/v1/catalogue/libraries/{id}/collections` — the membership
+/// is SET, not patched. The old attach/detach pair is gone: send the whole
+/// list you want the library to end up with.
 @Serializable
-data class AdminLibrariesResponse(val libraries: List<AdminLibrary>)
+data class CatalogueMembership(val collectionIds: List<String>)
 
 @Serializable
-data class ScanState(
-    val scanned: Int,
-    val failed: Int,
-    val skipped: Int,
-    val complete: Boolean,
+data class RefreshLibraryResponse(
+    val asked: Int = 0,
+    val offline: Int = 0,
+    val unsupported: Int = 0,
 )
-
-@Serializable
-data class CollectionInfo(
-    val moduleId: String,
-    val collectionId: String,
-    val hostName: String? = null,
-    val mediaType: String,
-    val connected: Boolean,
-    val scan: ScanState? = null,
-)
-
-@Serializable
-data class CollectionsResponse(val collections: List<CollectionInfo>)
-
-@Serializable
-data class CreateLibraryRequest(val name: String, val mediaType: String)
-
-@Serializable
-data class CreateLibraryResponse(val id: String)
-
-@Serializable
-data class AttachCollectionRequest(val moduleId: String, val collectionId: String)
-
-@Serializable
-data class RefreshLibraryResponse(val asked: Int, val offline: Int)
 
 /// HUB-5 provider precedence: earlier providers own a field, later ones
 /// only fill what's left empty.
@@ -132,15 +127,26 @@ data class RefreshLibraryResponse(val asked: Int, val offline: Int)
 data class ProviderChain(val order: List<String>, val default: List<String>)
 
 @Serializable
-data class ProviderConfigured(val configured: Boolean)
+data class TheAudioDbConfiguration(val premiumKeyConfigured: Boolean = false)
 
 @Serializable
 data class ProvidersResponse(
-    val tmdb: ProviderConfigured,
-    val tvdb: ProviderConfigured,
-    val anidb: ProviderConfigured,
+    val tmdb: ProviderConfiguration,
+    val tvdb: ProviderConfiguration,
+    val anidb: ProviderConfiguration,
+    val fanart: ProviderConfiguration,
+    val theaudiodb: TheAudioDbConfiguration,
+    /// Every provider the hub can chain, in no particular order — the
+    /// chain editor's candidate list.
+    val available: List<String> = emptyList(),
     val chains: Map<String, ProviderChain> = emptyMap(),
 )
+
+@Serializable
+data class SetFanartRequest(val clientKey: String)
+
+@Serializable
+data class SetTheAudioDbRequest(val apiKey: String)
 
 @Serializable
 data class SetChainRequest(val order: List<String>)
@@ -174,8 +180,15 @@ data class AdminSession(
     val mode: String,
     val moduleId: String,
     val idleSecs: Long,
-    val streams: StreamsVerdict? = null,
+    val streams: SessionStreamSummary? = null,
 )
 
 @Serializable
-data class SessionsResponse(val sessions: List<AdminSession>)
+data class SessionStreamSummary(
+    val video: String = "",
+    val audio: String = "",
+    val cost: String? = null,
+)
+
+@Serializable
+data class SessionsResponse(val sessions: List<AdminSession> = emptyList())

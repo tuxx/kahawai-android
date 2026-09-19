@@ -1,6 +1,7 @@
 package com.kolktech.kahawai.playback
 
-import com.kolktech.kahawai.data.network.dto.AudioStreamInfo
+import com.kolktech.kahawai.data.network.dto.ClientAudioStream
+import com.kolktech.kahawai.data.network.dto.ItemSource
 import com.kolktech.kahawai.data.network.dto.Pref
 import com.kolktech.kahawai.data.network.dto.SubtitleTrack
 
@@ -25,14 +26,36 @@ internal const val PREF_SUBS = "subs"
 /// declares none.
 internal const val PREF_AUDIO = "audio"
 
-/// Scoped to one item: `#N`, the exact stream index. Films only — two
-/// English tracks (feature and commentary) is common and no language can
-/// tell them apart, while an episode that pinned an index would freeze on
-/// it while the rest of the series moved on.
+/// Scoped to one physical SOURCE (see [sourcePreferenceScope]): `#N`, the
+/// exact stream index. Films only — two English tracks (feature and
+/// commentary) is common and no language can tell them apart, while an
+/// episode that pinned an index would freeze on it while the rest of the
+/// series moved on.
 internal const val PREF_AUDIO_TRACK = "audio.track"
 
-/// Scoped to one item: the exact track id, `` for none.
+/// Scoped to one physical SOURCE: the exact track id, `` for none.
 internal const val PREF_SUBS_TRACK = "subs.track"
+
+/// Where an EXACT track choice is remembered — a stream index or a track id
+/// only means anything against the file it was picked from, so these rows
+/// are keyed by the source rather than by the logical title. Mirrors
+/// `sourcePreferenceScope` in web/src/domain/source.ts, including the
+/// collection copy in the key: numeric source ids can be reused after a
+/// deletion, and the copy's identity is known before playback starts.
+///
+/// The language-level memories ([PREF_SUBS]/[PREF_AUDIO]) deliberately do
+/// NOT use this — "I watch this show in Japanese" has to survive a
+/// re-encode, a new copy and a different mux order.
+internal fun sourcePreferenceScope(collectionItemId: String?, sourceId: Int?): String? {
+    if (collectionItemId.isNullOrEmpty() || sourceId == null) return null
+    return "source:$collectionItemId:$sourceId"
+}
+
+/// The scope for whichever source was negotiated, resolved out of the
+/// item's own source list — [sourceId] is what a QUERY's `negotiated.source`
+/// or a started session reports.
+internal fun sourcePreferenceScope(sources: List<ItemSource>, sourceId: Int?): String? =
+    sourcePreferenceScope(sources.firstOrNull { it.sourceId == sourceId }?.collectionItemId, sourceId)
 
 /// Whether the account's per-media-type list can still affect the answer.
 /// It's the only layer that needs to know which library an item is in, and
@@ -58,15 +81,15 @@ private fun exactIndex(value: String?, count: Int): Int? =
 internal fun resolveAudioTrack(
     prefs: List<Pref>,
     seriesId: String,
-    itemId: String,
+    sourceScope: String?,
     mediaType: String,
     originalLanguage: String?,
-    audio: List<AudioStreamInfo>,
+    audio: List<ClientAudioStream>,
 ): Int {
-    // Most specific first: THIS item's exact track, since two English tracks
-    // - feature and commentary - are common and language cannot express the
-    // choice.
-    exactIndex(prefValue(prefs, itemId, PREF_AUDIO_TRACK), audio.size)?.let { return it }
+    // Most specific first: this SOURCE's exact track, since two English
+    // tracks - feature and commentary - are common and language cannot
+    // express the choice.
+    sourceScope?.let { exactIndex(prefValue(prefs, it, PREF_AUDIO_TRACK), audio.size)?.let { i -> return i } }
     val remembered = prefValue(prefs, seriesId, PREF_AUDIO)
     if (remembered != null) {
         exactIndex(remembered, audio.size)?.let { return it }
@@ -92,7 +115,7 @@ internal fun resolveAudioTrack(
 /// What an audio pick writes to the series' memory: the language, which is
 /// what carries across episodes whose track order differs, or `#N` for a
 /// track that declares none.
-internal fun rememberedAudioValue(track: AudioStreamInfo?, index: Int): String =
+internal fun rememberedAudioValue(track: ClientAudioStream?, index: Int): String =
     track?.language?.lowercase()?.takeIf { it.isNotEmpty() } ?: "#$index"
 
 /// A bitmap track: its cues are pictures, not text.
@@ -107,17 +130,20 @@ private fun prefValue(prefs: List<Pref>, scope: String, key: String): String? =
     prefs.firstOrNull { it.scope == scope && it.key == key }?.value
 
 /// The track this item opens with, or null for none — [seriesId] is the
-/// item's parent id, or its own id when it has no parent.
+/// item's parent id, or its own id when it has no parent, and [sourceScope]
+/// is [sourcePreferenceScope] for the negotiated source (null when no source
+/// is known yet, which simply skips the exact layer).
 internal fun resolveSubtitleTrack(
     prefs: List<Pref>,
     seriesId: String,
-    itemId: String,
+    sourceScope: String?,
     mediaType: String,
     tracks: List<SubtitleTrack>,
 ): SubtitleTrack? {
-    // Top precedence: this item's exact remembered row, honoured only while
-    // it's still a track this client can be served.
-    val exactId = prefValue(prefs, itemId, PREF_SUBS_TRACK)?.toLongOrNull()
+    // Top precedence: this SOURCE's exact remembered row, honoured only while
+    // it's still a track this client can be served. Track ids can be negative
+    // (the hub numbers embedded streams that way), so parse signed.
+    val exactId = sourceScope?.let { prefValue(prefs, it, PREF_SUBS_TRACK) }?.toLongOrNull()
     tracks.firstOrNull { it.id == exactId && it.delivery != "none" }?.let { return it }
     return pickSubtitleTrack(subtitleWishlist(prefs, seriesId, mediaType), tracks)
 }

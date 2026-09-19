@@ -45,19 +45,30 @@ class PlaybackRepositoryTest {
         server.enqueue(
             MockResponse().setBody(
                 """
-                {"session_id":"s1","mode":"direct","content_type":"video/mp4","stream_url":"http://hub/s1","part_base_ms":0}
+                {"session_id":"s1","mode":"direct","content_type":"video/mp4","stream_url":"http://hub/s1",
+                 "part_base_ms":0,"effective_start_ms":5000,"source_id":3,"source_fingerprint":"fp1",
+                 "streams":{"video":"direct","audio":"direct","subtitles":[]}}
                 """.trimIndent(),
             ),
         )
 
-        val result = repository.startSession("item1", profile, startMs = 5000, audioTrack = 1)
+        val result = repository.startSession("item1", "lib1", profile, startMs = 5000, audioTrack = 1)
 
         val recorded = server.takeRequest()
         assertEquals("POST", recorded.method)
         assertEquals("/api/v1/playback/sessions", recorded.path)
-        assertTrue(recorded.body.readUtf8().contains("\"start_ms\":5000"))
+        val body = recorded.body.readUtf8()
+        assertTrue(body.contains("\"start_ms\":5000"))
+        // The hub rejects a start with no library, and a non-zero start is
+        // a resume.
+        assertTrue(body.contains("\"library_id\":\"lib1\""))
+        assertTrue(body.contains("\"resume\":true"))
         assertEquals("direct", result.mode)
         assertEquals("s1", result.sessionId)
+        // What the next resume has to send back so the hub can tell
+        // whether the position still refers to the same file.
+        assertEquals("fp1", result.sourceFingerprint)
+        assertEquals(5000L, result.effectiveStartMs)
     }
 
     @Test
@@ -78,16 +89,20 @@ class PlaybackRepositoryTest {
             MockResponse().setBody(
                 """
                 {
-                  "id":"ep1","kind":"episode","title":"Pilot",
-                  "negotiated":{"mode":"direct","cost":"free","subtitles":[
-                    {"id":1,"item_id":"ep1","origin":"embedded","format":"srt","delivery":"text"}
+                  "id":"i1","kind":"movie","media_type":"movies","title":"Arrival",
+                  "representative_id":"c1:1","copy_ids":["c1:1"],
+                  "metadata":{"description":{},"provenance":{}},
+                  "sources":[],"chapters":[],"copies":[],"segments":[],
+                  "negotiated":{"mode":"direct","cost":"free","target_duration_secs":6,"subtitles":[
+                    {"id":1,"item_id":"i1","origin":"embedded","format":"srt","delivery":"text",
+                     "note":"","deletable":false,"machine":false}
                   ]}
                 }
                 """.trimIndent(),
             ),
         )
 
-        val result = repository.subtitles("ep1", profile)
+        val result = repository.subtitles("lib1", "i1", profile)
 
         assertEquals(1, result.size)
         assertEquals("srt", result[0].format)
@@ -95,9 +110,18 @@ class PlaybackRepositoryTest {
 
     @Test
     fun `subtitles returns empty list when negotiated is absent`() = runTest {
-        server.enqueue(MockResponse().setBody("""{"id":"ep1","kind":"episode","title":"Pilot"}"""))
+        server.enqueue(
+            MockResponse().setBody(
+                """
+                {"id":"i1","kind":"movie","media_type":"movies","title":"Arrival",
+                 "representative_id":"c1:1","copy_ids":["c1:1"],
+                 "metadata":{"description":{},"provenance":{}},
+                 "sources":[],"chapters":[],"copies":[],"segments":[]}
+                """.trimIndent(),
+            ),
+        )
 
-        val result = repository.subtitles("ep1", profile)
+        val result = repository.subtitles("lib1", "i1", profile)
 
         assertEquals(emptyList<Any>(), result)
     }

@@ -21,12 +21,14 @@ import com.kolktech.kahawai.playback.PREF_AUDIO
 import com.kolktech.kahawai.playback.PREF_AUDIO_TRACK
 import com.kolktech.kahawai.playback.needsMediaType
 import com.kolktech.kahawai.playback.rememberedAudioValue
-import com.kolktech.kahawai.playback.resolveAudioTrack
 import com.kolktech.kahawai.playback.PREF_SUBS
 import com.kolktech.kahawai.playback.PREF_SUBS_TRACK
 import com.kolktech.kahawai.playback.rememberedSubsTrackValue
 import com.kolktech.kahawai.playback.rememberedSubsValue
 import com.kolktech.kahawai.playback.resolveSubtitleTrack
+import com.kolktech.kahawai.playback.negotiatePlayback
+import com.kolktech.kahawai.playback.sourcePreferenceScope
+import com.kolktech.kahawai.data.network.dto.negotiatedAudioStreams
 
 /// Containers with no media of their own — you drill into a child
 /// (episode/track) to get a Play button.
@@ -41,6 +43,10 @@ sealed interface DetailState {
         val subtitleTracks: List<SubtitleTrack> = emptyList(),
         val selectedSubtitleTrack: SubtitleTrack? = null,
         val selectedAudioTrackIndex: Int = 0,
+        /// The source the negotiation chose — Play pins the session to it so
+        /// the audio index and subtitle track ids stay meaningful (they are
+        /// per-source). Null when nothing is negotiable.
+        val sourceId: Int? = null,
         /// True while a "Mark watched"/"Mark unwatched" call is in
         /// flight — disables the button so a slow link can't queue a
         /// second toggle behind the first.
@@ -52,16 +58,21 @@ class DetailViewModel(
     application: Application,
     private val repo: CatalogRepository,
     private val itemId: String,
-    /// Which library this item was opened from. The item's own detail
-    /// doesn't name one (the hub only puts library_id on browse rows), and
-    /// without it the account's per-media-type track lists can't be found
-    /// at all — see TrackChoice.
-    private val libraryId: String?,
+    /// Which library this item is in. Required, not optional: every
+    /// catalogue route is library-scoped now, so without it the item
+    /// cannot be fetched at all — and it is also the only route to the
+    /// media type the account's track lists are keyed by (see TrackChoice).
+    private val libraryId: String,
     private val prefsRepo: PreferencesRepository = PreferencesRepository(),
 ) : AndroidViewModel(application) {
     /// The scope a subtitle pick is remembered under (HUB-33): the show, so
     /// every episode of it opens the same way. Known once the item loads.
     private var seriesId: String? = null
+
+    /// Where this item's EXACT track choices live — keyed by the negotiated
+    /// physical source, not by the item (see [sourcePreferenceScope]). Known
+    /// once the QUERY answers, and null while nothing is negotiated.
+    private var sourceScope: String? = null
     private var prefsJob: Job? = null
     private val _state = MutableStateFlow<DetailState>(DetailState.Loading)
     val state: StateFlow<DetailState> = _state
@@ -95,42 +106,59 @@ class DetailViewModel(
                 val libraries = async(start = CoroutineStart.LAZY) {
                     runCatching { repo.libraries() }.getOrDefault(emptyList())
                 }
-                val detail = repo.queryItem(itemId, profile)
-                val children = if (detail.kind == "show" || detail.kind == "album") {
-                    repo.children(itemId)
-                } else {
-                    emptyList()
-                }
-                val subtitleTracks = detail.negotiated?.subtitles ?: emptyList()
-                seriesId = detail.parentId ?: detail.id
-                // What this title is remembered as being watched with, so
-                // the picker opens on the track Play is about to use rather
-                // than on "none" (see TrackChoice).
+                // The first QUERY can only rank sources on audio index 0 —
+                // stream lists arrive with it. It doubles as the page's own
+                // data and as the negotiation's preview, so the common case
+                // (everything already prefers index 0) costs one request.
+                val preview = repo.queryItem(libraryId, itemId, profile)
+                seriesId = preview.parentId ?: preview.id
                 val known = prefs.await()
-                val mediaType = if (needsMediaType(known) && libraryId != null) {
+                val mediaType = if (needsMediaType(known)) {
                     libraries.await().firstOrNull { it.id == libraryId }?.mediaType ?: ""
                 } else {
                     ""
                 }
+                // Re-ranks the sources on the audio each would actually be
+                // played with, when that isn't index 0 — see
+                // [negotiatePlayback]. The result is the source Play will
+                // pin, so the page draws the same one that will be served.
+                val choice = negotiatePlayback(
+                    repo = repo,
+                    libraryId = libraryId,
+                    itemId = itemId,
+                    profile = profile,
+                    prefs = known,
+                    mediaType = mediaType,
+                    preview = preview,
+                )
+                val detail = choice.item
+                val children = if (detail.kind in NOT_DIRECTLY_PLAYABLE) {
+                    repo.children(libraryId, itemId)
+                } else {
+                    emptyList()
+                }
+                val subtitleTracks = detail.negotiated?.subtitles ?: emptyList()
+                sourceScope = sourcePreferenceScope(detail.sources, choice.sourceId)
                 // What this title is remembered as being watched with, so the
                 // pickers open on the tracks Play is about to use rather than
-                // on "none" and track zero (see TrackChoice).
+                // on "none" and track zero (see TrackChoice). The audio index
+                // came out of the negotiation, already resolved against the
+                // source it chose.
                 val selected = resolveSubtitleTrack(
                     prefs = known,
                     seriesId = seriesId ?: itemId,
-                    itemId = itemId,
+                    sourceScope = sourceScope,
                     mediaType = mediaType,
                     tracks = subtitleTracks,
                 )
-                val audio = resolveAudioTrack(
-                    prefs = known,
-                    seriesId = seriesId ?: itemId,
-                    itemId = itemId,
-                    mediaType = mediaType,
-                    originalLanguage = detail.metadata?.originalLanguage,
-                    audio = detail.sources.firstOrNull()?.streams?.audio ?: emptyList(),
+                _state.value = DetailState.Loaded(
+                    detail = detail,
+                    children = children,
+                    subtitleTracks = subtitleTracks,
+                    selectedSubtitleTrack = selected,
+                    selectedAudioTrackIndex = choice.audioTrack,
+                    sourceId = choice.sourceId,
                 )
-                _state.value = DetailState.Loaded(detail, children, subtitleTracks, selected, audio)
             } catch (e: Exception) {
                 _state.value = DetailState.Error(e.readableMessage(), e.isAuthError())
             }
@@ -151,12 +179,13 @@ class DetailViewModel(
         viewModelScope.launch {
             try {
                 val profile = CapabilityProfileBuilder.build(getApplication())
-                val detail = repo.queryItem(itemId, profile)
-                val children = if (detail.kind == "show" || detail.kind == "album") {
-                    repo.children(itemId)
+                val detail = repo.queryItem(libraryId, itemId, profile)
+                val children = if (detail.kind in NOT_DIRECTLY_PLAYABLE) {
+                    repo.children(libraryId, itemId)
                 } else {
                     emptyList()
                 }
+                sourceScope = sourcePreferenceScope(detail.sources, detail.negotiated?.source?.sourceId)
                 val current = _state.value as? DetailState.Loaded ?: return@launch
                 _state.value = current.copy(
                     detail = detail,
@@ -180,12 +209,11 @@ class DetailViewModel(
         _state.value = current.copy(watchedActionInFlight = true)
         viewModelScope.launch {
             try {
-                val update = repo.setWatched(itemId, target)
+                val update = repo.setWatched(libraryId, itemId, target)
                 val loaded = _state.value as? DetailState.Loaded ?: return@launch
                 _state.value = loaded.copy(
                     detail = loaded.detail.copy(
                         played = update.played,
-                        playCount = update.playCount,
                         resumePositionMs = update.positionMs,
                     ),
                     watchedActionInFlight = false,
@@ -213,7 +241,9 @@ class DetailViewModel(
             previous?.join()
             runCatching {
                 prefsRepo.put(series, PREF_SUBS, rememberedSubsValue(track))
-                prefsRepo.put(itemId, PREF_SUBS_TRACK, rememberedSubsTrackValue(track))
+                // The exact row is the source's, not the item's: a track id
+                // only means anything against the file it came from.
+                sourceScope?.let { prefsRepo.put(it, PREF_SUBS_TRACK, rememberedSubsTrackValue(track)) }
             }
         }
     }
@@ -229,14 +259,14 @@ class DetailViewModel(
         val current = _state.value as? DetailState.Loaded ?: return
         _state.value = current.copy(selectedAudioTrackIndex = index)
         val series = seriesId ?: return
-        val streams = current.detail.sources.firstOrNull()?.streams?.audio ?: emptyList()
+        val streams = current.detail.negotiatedAudioStreams()
         val previous = prefsJob
         prefsJob = viewModelScope.launch {
             previous?.join()
             runCatching {
                 prefsRepo.put(series, PREF_AUDIO, rememberedAudioValue(streams.getOrNull(index), index))
                 if (current.detail.kind == "movie") {
-                    prefsRepo.put(itemId, PREF_AUDIO_TRACK, "#$index")
+                    sourceScope?.let { prefsRepo.put(it, PREF_AUDIO_TRACK, "#$index") }
                 }
             }
         }

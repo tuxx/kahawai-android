@@ -47,8 +47,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.kolktech.kahawai.R
-import com.kolktech.kahawai.data.network.dto.AdminLibrary
-import com.kolktech.kahawai.data.network.dto.CollectionInfo
+import com.kolktech.kahawai.data.network.dto.CatalogueCollection
+import com.kolktech.kahawai.data.network.dto.LibrarySummary
 import com.kolktech.kahawai.data.network.dto.PendingEnrollment
 import com.kolktech.kahawai.data.network.dto.ProviderChain
 import com.kolktech.kahawai.data.network.dto.Satellite
@@ -399,7 +399,11 @@ private fun speedPair(a: Double?, b: Double?): String? {
 // ---- Libraries ----
 
 @Composable
-private fun LibrariesSection(libraries: List<AdminLibrary>, collections: List<CollectionInfo>, viewModel: AdminViewModel) {
+private fun LibrariesSection(
+    libraries: List<LibrarySummary>,
+    collections: List<CatalogueCollection>,
+    viewModel: AdminViewModel,
+) {
     var newName by remember { mutableStateOf("") }
     var newType by remember { mutableStateOf("movies") }
     var typeMenuExpanded by remember { mutableStateOf(false) }
@@ -431,16 +435,18 @@ private fun LibrariesSection(libraries: List<AdminLibrary>, collections: List<Co
     }
 
     libraries.forEach { lib ->
-        val attachable = collections.filter { c ->
-            c.mediaType == lib.mediaType && lib.collections.none { it.moduleId == c.moduleId && it.collectionId == c.collectionId }
-        }
+        // A collection is one opaque id now, not a (module, collection)
+        // pair, and membership is SET rather than patched — attach and
+        // detach both send the whole list they want the library to have.
+        val members = collections.filter { it.id in lib.collectionIds }
+        val attachable = collections.filter { it.mediaType == lib.mediaType && it.id !in lib.collectionIds }
         var attachMenuExpanded by remember(lib.id) { mutableStateOf(false) }
 
         Column(modifier = Modifier.padding(vertical = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 AssistChip(onClick = {}, label = { Text(lib.mediaType) })
                 Text(lib.name, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(start = 8.dp).weight(1f))
-                TextButton(onClick = { viewModel.refreshLibrary(lib.id) }, enabled = lib.collections.isNotEmpty()) {
+                TextButton(onClick = { viewModel.refreshLibrary(lib.id) }, enabled = lib.collectionIds.isNotEmpty()) {
                     Text(stringResource(R.string.refresh))
                 }
                 TextButton(onClick = { viewModel.deleteLibrary(lib.id) }) { Text(stringResource(R.string.delete)) }
@@ -448,18 +454,16 @@ private fun LibrariesSection(libraries: List<AdminLibrary>, collections: List<Co
             val offlineSuffix = stringResource(R.string.admin_offline_suffix)
             val scannedLabel = stringResource(R.string.admin_scanned)
             val scanningLabel = stringResource(R.string.admin_scanning)
-            lib.collections.forEach { m ->
-                val info = collections.find { it.moduleId == m.moduleId && it.collectionId == m.collectionId }
-                val scan = info?.scan
+            members.forEach { c ->
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 8.dp)) {
                     Text(
-                        (m.hostName ?: m.moduleId) + "/" + m.collectionId + (if (info != null && !info.connected) offlineSuffix else "") +
-                            (scan?.let { " · ${if (it.complete) scannedLabel else scanningLabel} ${it.scanned}" } ?: ""),
+                        c.label() + (if (!c.connected) offlineSuffix else "") +
+                            " · ${if (c.scanning) scanningLabel else scannedLabel} ${c.fileCount}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f),
                     )
-                    TextButton(onClick = { viewModel.detachCollection(lib.id, m.moduleId, m.collectionId) }) { Text("×") }
+                    TextButton(onClick = { viewModel.setCollections(lib.id, lib.collectionIds - c.id) }) { Text("×") }
                 }
             }
             if (attachable.isNotEmpty()) {
@@ -468,9 +472,9 @@ private fun LibrariesSection(libraries: List<AdminLibrary>, collections: List<Co
                     DropdownMenu(expanded = attachMenuExpanded, onDismissRequest = { attachMenuExpanded = false }) {
                         attachable.forEach { c ->
                             DropdownMenuItem(
-                                text = { Text((c.hostName ?: c.moduleId) + "/" + c.collectionId) },
+                                text = { Text(c.label()) },
                                 onClick = {
-                                    viewModel.attachCollection(lib.id, c.moduleId, c.collectionId)
+                                    viewModel.setCollections(lib.id, lib.collectionIds + c.id)
                                     attachMenuExpanded = false
                                 },
                             )
@@ -482,6 +486,8 @@ private fun LibrariesSection(libraries: List<AdminLibrary>, collections: List<Co
         HorizontalDivider()
     }
 }
+
+private fun CatalogueCollection.label(): String = "$mediahostId/$remoteId"
 
 // ---- Active sessions ----
 

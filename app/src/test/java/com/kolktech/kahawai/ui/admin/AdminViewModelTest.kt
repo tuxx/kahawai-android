@@ -2,12 +2,13 @@ package com.kolktech.kahawai.ui.admin
 
 import app.cash.turbine.test
 import com.kolktech.kahawai.R
-import com.kolktech.kahawai.data.network.dto.AdminLibrary
+import com.kolktech.kahawai.data.network.dto.CatalogueCollection
 import com.kolktech.kahawai.data.network.dto.AdminSession
-import com.kolktech.kahawai.data.network.dto.CollectionInfo
+import com.kolktech.kahawai.data.network.dto.LibrarySummary
 import com.kolktech.kahawai.data.network.dto.EnrichStatusResponse
 import com.kolktech.kahawai.data.network.dto.PendingEnrollment
-import com.kolktech.kahawai.data.network.dto.ProviderConfigured
+import com.kolktech.kahawai.data.network.dto.ProviderConfiguration
+import com.kolktech.kahawai.data.network.dto.TheAudioDbConfiguration
 import com.kolktech.kahawai.data.network.dto.ProvidersResponse
 import com.kolktech.kahawai.data.network.dto.RefreshLibraryResponse
 import com.kolktech.kahawai.data.network.dto.Satellite
@@ -40,9 +41,19 @@ class AdminViewModelTest {
         Satellite(moduleId = "m1", moduleType = "mediahost", name = "Living Room", certFingerprint = "cf1", connected = true, disabled = false),
     )
     private val sessions = listOf(AdminSession(sessionId = "s1", mode = "direct", moduleId = "m1", idleSecs = 30))
-    private val libraries = listOf(AdminLibrary(id = "lib1", name = "Movies", mediaType = "video"))
-    private val collections = listOf(CollectionInfo(moduleId = "m1", collectionId = "c1", mediaType = "video", connected = true))
-    private val providers = ProvidersResponse(tmdb = ProviderConfigured(true), tvdb = ProviderConfigured(false), anidb = ProviderConfigured(true))
+    private val libraries = listOf(
+        LibrarySummary(id = "lib1", name = "Movies", mediaType = "movies", collectionIds = listOf("c1")),
+    )
+    private val collections = listOf(
+        CatalogueCollection(id = "c1", mediaType = "movies", mediahostId = "m1", remoteId = "r1", connected = true),
+    )
+    private val providers = ProvidersResponse(
+        tmdb = ProviderConfiguration(true),
+        tvdb = ProviderConfiguration(false),
+        anidb = ProviderConfiguration(true),
+        fanart = ProviderConfiguration(false),
+        theaudiodb = TheAudioDbConfiguration(false),
+    )
     private val enrich = EnrichStatusResponse(running = false, matched = 1, weak = 0, missed = 0)
 
     @Before
@@ -158,16 +169,18 @@ class AdminViewModelTest {
         assertNull(viewModel.notice.value)
     }
 
+    /// Attach and detach are the same call with a different list now:
+    /// membership is set wholesale, not patched.
     @Test
-    fun `attachCollection and detachCollection reload without a notice on success`() = runTest {
+    fun `setCollections reloads without a notice on success`() = runTest {
         val viewModel = vm()
 
-        viewModel.attachCollection("lib1", "m1", "c1")
-        coVerify(exactly = 1) { repo.attachCollection("lib1", "m1", "c1") }
+        viewModel.setCollections("lib1", listOf("c1", "c2"))
+        coVerify(exactly = 1) { repo.setCollections("lib1", listOf("c1", "c2")) }
         assertNull(viewModel.notice.value)
 
-        viewModel.detachCollection("lib1", "m1", "c1")
-        coVerify(exactly = 1) { repo.detachCollection("lib1", "m1", "c1") }
+        viewModel.setCollections("lib1", emptyList())
+        coVerify(exactly = 1) { repo.setCollections("lib1", emptyList()) }
         assertNull(viewModel.notice.value)
     }
 

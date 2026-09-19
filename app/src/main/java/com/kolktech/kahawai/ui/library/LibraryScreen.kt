@@ -45,7 +45,7 @@ fun LibraryScreen(
     libraryId: String,
     libraryName: String,
     repo: CatalogRepository,
-    onOpenItem: (itemId: String, libraryId: String?) -> Unit,
+    onOpenItem: (itemId: String, libraryId: String) -> Unit,
     onBack: () -> Unit,
     onSessionExpired: () -> Unit,
 ) {
