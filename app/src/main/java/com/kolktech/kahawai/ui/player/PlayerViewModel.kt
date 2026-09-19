@@ -1600,6 +1600,17 @@ class PlayerViewModel(
         if (session.mode == "direct") return // shift is always 0 for direct
         if (attachedVttShiftMs == offsetMs) return
         Log.d(TAG, "rebaking VTT shift item=$itemId stale=$attachedVttShiftMs fresh=$offsetMs")
+        reprepareInPlace()
+    }
+
+    /// Rebuild and re-prepare the current session's MediaItem without
+    /// disturbing where the viewer is: position is playlist-local and the
+    /// playlist itself is unchanged, so handing it back as startPositionMs
+    /// resumes in place. Used whenever the item's own
+    /// SubtitleConfigurations change — a text pick, or the shift baked into
+    /// their URLs going stale.
+    private fun reprepareInPlace() {
+        val session = session ?: return
         val resumeLocalMs = realPlayer.currentPosition
         val wasPlaying = realPlayer.playWhenReady
         realPlayer.setMediaItem(buildMediaItem(session), resumeLocalMs)
@@ -1616,13 +1627,28 @@ class PlayerViewModel(
     /// offsetMs changes on every seek-restart. For "direct" sessions
     /// offsetMs is pinned to 0 (the native timeline is already absolute),
     /// so the shift correctly evaluates to 0 there.
-    /// Empty without a session: the VTT tap is session-scoped now, so
-    /// there is no URL to sideload until one exists. Every caller runs
-    /// while attaching a session, so this is a guard rather than a case.
+    /// Only the SELECTED text track, not every one on offer.
+    ///
+    /// Sideloading them all bought instant switching, and cost the ability
+    /// to play some items at all: one episode listing 38 text tracks became
+    /// a 39-way MergingMediaSource, fetched 38 VTT files up front, and drove
+    /// the heap to its ceiling (0% free of 165MB, seconds of blocking GC).
+    /// Under that pressure the deselect/reselect race in
+    /// ProgressiveMediaPeriod.selectTracks trips its
+    /// checkState(isPendingReset()) and kills playback, which session
+    /// recovery then restarts straight back into.
+    ///
+    /// One track is one extra period and one fetch. The cost is that
+    /// changing a text pick now re-prepares the item in place
+    /// (see [selectSubtitleTrack]) instead of being a pure track-selection
+    /// override — about a second, against an episode that could not be
+    /// watched.
+    ///
+    /// Empty without a session: the VTT tap is session-scoped, so there is
+    /// no URL to sideload until one exists.
     private fun textDeliverySubtitleConfigs(): List<MediaItem.SubtitleConfiguration> {
         val sessionId = session?.sessionId ?: return emptyList()
-        return _subtitleTracks.value
-            .filter { it.delivery == "text" }
+        return listOfNotNull(_selectedSubtitleTrack.value?.takeIf { it.delivery == "text" })
             .map { track ->
                 val vttUrl = subtitleVttUrl(ApiClient.baseUrl(), sessionId, track.id, offsetMs)
                 MediaItem.SubtitleConfiguration.Builder(Uri.parse(vttUrl))
@@ -1641,56 +1667,82 @@ class PlayerViewModel(
     /// hands straight to media3's own parsers ([isNativeBitmapPick]).
     /// Ass delivery, and overlay delivery in every other shape, are read
     /// out of band and are never part of ExoPlayer's track groups.
+    /// Installs the TEXT override for the current pick, if the group it
+    /// names is actually present yet.
+    ///
+    /// Two rules here exist to stop a deselect/reselect churn that crashes
+    /// ExoPlayer outright on an item with many sideloaded VTT tracks
+    /// (38 on one episode). `ProgressiveMediaPeriod.selectTracks` cancels a
+    /// load when the last enabled track of a period is deselected mid-load
+    /// without arming a pending reset, and the resulting
+    /// `onContinueLoadingRequested` trips `checkState(isPendingReset())` in
+    /// `startLoading` — an IllegalStateException that kills playback, which
+    /// session recovery then restarts into the same race.
+    ///
+    /// So: the renderer is enabled ONLY with an override in hand. Enabling
+    /// it while the wanted group has not arrived leaves the selector free to
+    /// auto-pick one of the other periods — one this method is about to take
+    /// away again on the next firing, which is the deselect that starts the
+    /// whole thing. No subtitles for a moment longer is the right trade
+    /// against a random one and a crash.
+    ///
+    /// And: nothing is written unless it changes. This runs on every
+    /// `onTracksChanged`, and re-asserting the same clear-and-re-add while
+    /// dozens of VTT loads are in flight is exactly the churn that finds the
+    /// race.
     private fun applySubtitleTrackSelectionOverride() {
         val selected = _selectedSubtitleTrack.value
         val textTrack = selected?.takeIf { it.delivery == "text" }
         val bitmapTrack = selected?.takeIf { isNativeBitmapPick(it, isDirect) }
+        val groups = realPlayer.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
+        val override = when {
+            bitmapTrack != null -> {
+                // Found by what it IS, not by an id: this track came out of
+                // the file itself, so there's no sideloaded id to match on
+                // and the container's own numbering need not agree with the
+                // hub's stream indices. See nativeBitmapGroupIndex.
+                val infos = groups.map {
+                    val format = it.mediaTrackGroup.getFormat(0)
+                    TextTrackInfo(format.sampleMimeType, format.codecs, format.language)
+                }
+                val index = embeddedBitmapOrdinal(_subtitleTracks.value, bitmapTrack)
+                    ?.let { ordinal -> nativeBitmapGroupIndex(infos, ordinal, bitmapTrack.language) }
+                Log.i(TAG, "bitmap override: want=${bitmapTrack.id} matched=${index != null} textGroups=$infos")
+                index?.let { TrackSelectionOverride(groups[it].mediaTrackGroup, 0) }
+            }
+            textTrack != null -> {
+                // MergingMediaPeriod re-exposes every child source's formats
+                // with the id rewritten to "<childIndex>:<originalId>"
+                // (uniqueness across children — confirmed in 1.10.0
+                // bytecode), so the sideloaded VTT config's id "1234"
+                // surfaces here as e.g. "1:1234" and an exact comparison
+                // never matched — the override was silently skipped and
+                // text tracks never turned on. The hub's HLS playlists carry
+                // no subtitle renditions of their own, so every TEXT group
+                // is one of ours and suffix matching is unambiguous.
+                val wantedId = textTrack.id.toString()
+                val group = groups.firstOrNull {
+                    matchesSideloadedTrackId(it.mediaTrackGroup.getFormat(0).id, wantedId)
+                }
+                // Log.i, not Log.d: the vivo test device suppresses D-level
+                // logcat output entirely, and this is the one line that says
+                // whether a text pick actually engaged.
+                Log.i(
+                    TAG,
+                    "text override: want=$wantedId matched=${group != null} " +
+                        "textGroups=${groups.map { it.mediaTrackGroup.getFormat(0).id }}",
+                )
+                group?.let { TrackSelectionOverride(it.mediaTrackGroup, 0) }
+            }
+            else -> null
+        }
         val params = realPlayer.trackSelectionParameters.buildUpon()
             .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-            // Disabled unless a pick this pipeline renders is live — see the
-            // ExoPlayer.Builder note above: leaving the renderer enabled lets
-            // the selector pick a text track we never asked for.
-            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, textTrack == null && bitmapTrack == null)
-        if (bitmapTrack != null) {
-            // Found by what it IS, not by an id: this track came out of the
-            // file itself, so there's no sideloaded id to match on and the
-            // container's own numbering need not agree with the hub's stream
-            // indices. See nativeBitmapGroupIndex.
-            val groups = realPlayer.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
-            val infos = groups.map {
-                val format = it.mediaTrackGroup.getFormat(0)
-                TextTrackInfo(format.sampleMimeType, format.codecs, format.language)
-            }
-            val index = embeddedBitmapOrdinal(_subtitleTracks.value, bitmapTrack)
-                ?.let { ordinal -> nativeBitmapGroupIndex(infos, ordinal, bitmapTrack.language) }
-            // Log.i for the same reason as the text override below.
-            Log.i(TAG, "bitmap override: want=${bitmapTrack.id} matched=${index != null} textGroups=$infos")
-            if (index != null) params.addOverride(TrackSelectionOverride(groups[index].mediaTrackGroup, 0))
-        } else if (textTrack != null) {
-            // MergingMediaPeriod re-exposes every child source's formats
-            // with the id rewritten to "<childIndex>:<originalId>"
-            // (uniqueness across children — confirmed in 1.10.0
-            // bytecode), so the sideloaded VTT config's id "1234"
-            // surfaces here as e.g. "1:1234" and an exact comparison
-            // never matched — the override was silently skipped and
-            // text tracks never turned on. The hub's HLS playlists carry
-            // no subtitle renditions of their own, so every TEXT group
-            // is one of ours and suffix matching is unambiguous.
-            val wantedId = textTrack.id.toString()
-            val group = realPlayer.currentTracks.groups.firstOrNull {
-                it.type == C.TRACK_TYPE_TEXT && matchesSideloadedTrackId(it.mediaTrackGroup.getFormat(0).id, wantedId)
-            }
-            // Log.i, not Log.d: the vivo test device suppresses D-level
-            // logcat output entirely, and this is the one line that says
-            // whether a text pick actually engaged.
-            Log.i(
-                TAG,
-                "text override: want=$wantedId matched=${group != null} " +
-                    "textGroups=${realPlayer.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }.map { it.mediaTrackGroup.getFormat(0).id }}",
-            )
-            if (group != null) params.addOverride(TrackSelectionOverride(group.mediaTrackGroup, 0))
-        }
-        realPlayer.trackSelectionParameters = params.build()
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, override == null)
+            .also { builder -> override?.let { builder.addOverride(it) } }
+            .build()
+        if (params == realPlayer.trackSelectionParameters) return
+        realPlayer.trackSelectionParameters = params
     }
 
     /// A "direct" session serves the file byte-for-byte with every
@@ -1755,8 +1807,18 @@ class PlayerViewModel(
             // render off by the snap delta — the rebake (a no-op when the
             // baked shift is still current) settles that first; its
             // re-prepare path applies the override via onTracksChanged.
-            if (track?.delivery == "text") rebakeTextSubtitleShiftIfNeeded()
-            applySubtitleTrackSelectionOverride()
+            // Only the selected text track is sideloaded (see
+            // textDeliverySubtitleConfigs), so a text pick changes the
+            // MediaItem's own configuration list and needs the item
+            // re-prepared rather than a selection override over tracks that
+            // are not there. Leaving text does too: it drops the one that
+            // was. onTracksChanged applies the override once the new tracks
+            // land.
+            if (track?.delivery == "text" || previous?.delivery == "text") {
+                reprepareInPlace()
+            } else {
+                applySubtitleTrackSelectionOverride()
+            }
         }
     }
 
