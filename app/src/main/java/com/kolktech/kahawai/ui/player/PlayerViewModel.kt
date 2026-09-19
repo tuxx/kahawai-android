@@ -46,6 +46,7 @@ import com.kolktech.kahawai.data.network.dto.Segment
 import com.kolktech.kahawai.data.network.dto.StartSessionResponse
 import com.kolktech.kahawai.data.network.dto.ClientAudioStream
 import com.kolktech.kahawai.data.network.dto.SubtitleTrack
+import com.kolktech.kahawai.data.network.isSessionGone
 import com.kolktech.kahawai.data.network.readableMessage
 import com.kolktech.kahawai.data.repository.CatalogRepository
 import com.kolktech.kahawai.data.repository.PlaybackRepository
@@ -674,6 +675,10 @@ class PlayerViewModel(
     /// re-negotiate freely would silently reinterpret both.
     private var negotiatedSourceId: Int? = null
     private var prefsJob: Job? = null
+
+    /// The lost session a progress recovery has already been tried for, so
+    /// a hub that keeps refusing is asked once rather than every tick.
+    private var progressRecoveryFor: String? = null
 
     /// The START of what a seek can reach without waiting on the hub: the
     /// absolute position the current playlist begins at, since nothing
@@ -1892,7 +1897,47 @@ class PlayerViewModel(
                 Log.d(TAG, "progress reported sessionId=${session.sessionId} positionMs=$positionMs")
             } catch (e: Exception) {
                 Log.w(TAG, "progress report failed sessionId=${session.sessionId} positionMs=$positionMs", e)
-                // Best-effort, like the web client's beforeunload report.
+                // A network blip is best-effort, like the web client's
+                // beforeunload report — the next tick carries a newer
+                // position anyway. A session the hub no longer has is not:
+                // see recoverProgressSession.
+                if (e.isSessionGone()) recoverProgressSession(session.sessionId)
+            }
+        }
+    }
+
+    /// The hub has lost the session this playback reports into, so every
+    /// later report will fail the same way and everything watched since the
+    /// last good one is gone. Observed on a real session: reports 404ed for
+    /// twelve minutes while the film played on, and the next resume landed
+    /// where the last successful report had been.
+    ///
+    /// Re-establish one at the current position so the hub starts recording
+    /// again. That re-attaches the stream too — the pipeline behind the old
+    /// session went with it, so playing on was already borrowed time — which
+    /// costs a brief re-buffer and is the cheaper half of the trade against
+    /// losing the rest of the film's progress.
+    ///
+    /// At most one attempt per lost session, and playback is left alone if
+    /// it fails: a hub that cannot start a session would otherwise be asked
+    /// again every ten seconds for the rest of the film, and a viewer whose
+    /// picture is still fine should not be dropped onto an error screen over
+    /// bookkeeping. They are told, once, that it stopped being saved.
+    private fun recoverProgressSession(goneSessionId: String) {
+        if (progressRecoveryFor == goneSessionId) return
+        progressRecoveryFor = goneSessionId
+        viewModelScope.launch {
+            val positionMs = offsetMs + realPlayer.currentPosition
+            Log.w(TAG, "progress session gone item=$itemId sessionId=$goneSessionId positionMs=$positionMs")
+            try {
+                val profile = CapabilityProfileBuilder.build(getApplication())
+                val fresh = startSessionAndAttach(profile, positionMs, burnPickOrNull(_selectedSubtitleTrack.value))
+                Log.w(TAG, "progress session recovered item=$itemId newSessionId=${fresh.sessionId}")
+            } catch (e: Exception) {
+                Log.w(TAG, "progress session recovery failed item=$itemId", e)
+                progressJob?.cancel()
+                _transientError.value = getApplication<Application>()
+                    .getString(R.string.player_progress_not_saved)
             }
         }
     }

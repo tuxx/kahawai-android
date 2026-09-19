@@ -224,6 +224,7 @@
     <string name="player_seek_failed">Seek failed: %1$s</string>
     <string name="player_subtitle_switch_failed">Failed to switch subtitle: %1$s</string>
     <string name="player_audio_switch_failed">Failed to switch audio: %1$s</string>
+    <string name="player_progress_not_saved">Your progress is no longer being saved for this session.</string>
     <string name="detail_source">Source</string>
     <string name="detail_source_automatic">Automatic</string>
     <string name="detail_source_automatic_tag">automatic pick</string>
