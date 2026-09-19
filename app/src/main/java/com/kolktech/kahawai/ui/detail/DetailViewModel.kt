@@ -11,6 +11,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import com.kolktech.kahawai.data.network.dto.Item
 import com.kolktech.kahawai.data.network.dto.ItemDetail
+import com.kolktech.kahawai.data.network.dto.Pref
 import com.kolktech.kahawai.data.network.dto.SubtitleTrack
 import com.kolktech.kahawai.data.network.isAuthError
 import com.kolktech.kahawai.data.network.readableMessage
@@ -47,6 +48,13 @@ sealed interface DetailState {
         /// the audio index and subtitle track ids stay meaningful (they are
         /// per-source). Null when nothing is negotiable.
         val sourceId: Int? = null,
+        /// What the hub would pick on its own. Shown as such in the picker,
+        /// so choosing by hand is visibly a departure from it rather than an
+        /// indistinguishable alternative.
+        val automaticSourceId: Int? = null,
+        /// Whether [sourceId] is a hand-picked override rather than
+        /// [automaticSourceId].
+        val sourcePinned: Boolean = false,
         /// True while a "Mark watched"/"Mark unwatched" call is in
         /// flight — disables the button so a slow link can't queue a
         /// second toggle behind the first.
@@ -73,6 +81,23 @@ class DetailViewModel(
     /// physical source, not by the item (see [sourcePreferenceScope]). Known
     /// once the QUERY answers, and null while nothing is negotiated.
     private var sourceScope: String? = null
+
+    /// A source the viewer picked by hand, which outranks whatever the hub
+    /// would negotiate. Transient like the web client's own override: it
+    /// describes this visit to the page, not a standing choice, and source
+    /// ids are only stable within one response anyway.
+    private var pinnedSourceId: Int? = null
+
+    /// What the hub chooses when nothing is pinned. Captured from the FIRST,
+    /// unpinned negotiation and then held: once a pin is in place the hub
+    /// simply agrees with the pin, so asking it again would answer the wrong
+    /// question. The UI marks this one so "automatic" is never a mystery.
+    private var automaticSourceId: Int? = null
+
+    /// Preferences and media type, kept from the load so a source change can
+    /// re-rank without re-reading them.
+    private var knownPrefs: List<Pref> = emptyList()
+    private var mediaType: String = ""
     private var prefsJob: Job? = null
     private val _state = MutableStateFlow<DetailState>(DetailState.Loading)
     val state: StateFlow<DetailState> = _state
@@ -113,7 +138,8 @@ class DetailViewModel(
                 val preview = repo.queryItem(libraryId, itemId, profile)
                 seriesId = preview.parentId ?: preview.id
                 val known = prefs.await()
-                val mediaType = if (needsMediaType(known)) {
+                knownPrefs = known
+                mediaType = if (needsMediaType(known)) {
                     libraries.await().firstOrNull { it.id == libraryId }?.mediaType ?: ""
                 } else {
                     ""
@@ -130,8 +156,10 @@ class DetailViewModel(
                     prefs = known,
                     mediaType = mediaType,
                     preview = preview,
+                    pinnedSourceId = pinnedSourceId,
                 )
                 val detail = choice.item
+                if (pinnedSourceId == null) automaticSourceId = choice.sourceId
                 val children = if (detail.kind in NOT_DIRECTLY_PLAYABLE) {
                     repo.children(libraryId, itemId)
                 } else {
@@ -158,9 +186,67 @@ class DetailViewModel(
                     selectedSubtitleTrack = selected,
                     selectedAudioTrackIndex = choice.audioTrack,
                     sourceId = choice.sourceId,
+                    automaticSourceId = automaticSourceId,
+                    sourcePinned = pinnedSourceId != null,
                 )
             } catch (e: Exception) {
                 _state.value = DetailState.Error(e.readableMessage(), e.isAuthError())
+            }
+        }
+    }
+
+    /// Play this item from a specific physical source — or, with null, hand
+    /// the choice back to the hub.
+    ///
+    /// Re-runs the whole negotiation pinned to [sourceId] rather than just
+    /// relabelling the page: the streams, the delivery plan, the subtitle
+    /// track list and the audio index are all properties of the chosen file,
+    /// so a page still showing the previous source's answers would be
+    /// describing something else. Keeps the current content on screen while
+    /// it runs — a source change is not a reason to blank a page that
+    /// already has one.
+    fun selectSource(sourceId: Int?) {
+        val current = _state.value as? DetailState.Loaded ?: return
+        if (sourceId == pinnedSourceId) return
+        val previousPin = pinnedSourceId
+        pinnedSourceId = sourceId
+        viewModelScope.launch {
+            try {
+                val profile = CapabilityProfileBuilder.build(getApplication())
+                val choice = negotiatePlayback(
+                    repo = repo,
+                    libraryId = libraryId,
+                    itemId = itemId,
+                    profile = profile,
+                    prefs = knownPrefs,
+                    mediaType = mediaType,
+                    pinnedSourceId = sourceId,
+                )
+                val detail = choice.item
+                val subtitleTracks = detail.negotiated?.subtitles ?: emptyList()
+                sourceScope = sourcePreferenceScope(detail.sources, choice.sourceId)
+                val selected = resolveSubtitleTrack(
+                    prefs = knownPrefs,
+                    seriesId = seriesId ?: itemId,
+                    sourceScope = sourceScope,
+                    mediaType = mediaType,
+                    tracks = subtitleTracks,
+                )
+                val loaded = _state.value as? DetailState.Loaded ?: return@launch
+                _state.value = loaded.copy(
+                    detail = detail,
+                    subtitleTracks = subtitleTracks,
+                    selectedSubtitleTrack = selected,
+                    selectedAudioTrackIndex = choice.audioTrack,
+                    sourceId = choice.sourceId,
+                    automaticSourceId = automaticSourceId,
+                    sourcePinned = sourceId != null,
+                )
+            } catch (e: Exception) {
+                // Put the pin back: the page is still showing the source that
+                // actually answered.
+                pinnedSourceId = previousPin
+                _transientError.value = e.readableMessage()
             }
         }
     }
@@ -179,18 +265,33 @@ class DetailViewModel(
         viewModelScope.launch {
             try {
                 val profile = CapabilityProfileBuilder.build(getApplication())
-                val detail = repo.queryItem(libraryId, itemId, profile)
+                // Honours a hand-picked source: coming back from the player
+                // is not a reason to quietly hand the choice back to the hub.
+                val choice = negotiatePlayback(
+                    repo = repo,
+                    libraryId = libraryId,
+                    itemId = itemId,
+                    profile = profile,
+                    prefs = knownPrefs,
+                    mediaType = mediaType,
+                    pinnedSourceId = pinnedSourceId,
+                )
+                val detail = choice.item
+                if (pinnedSourceId == null) automaticSourceId = choice.sourceId
                 val children = if (detail.kind in NOT_DIRECTLY_PLAYABLE) {
                     repo.children(libraryId, itemId)
                 } else {
                     emptyList()
                 }
-                sourceScope = sourcePreferenceScope(detail.sources, detail.negotiated?.source?.sourceId)
+                sourceScope = sourcePreferenceScope(detail.sources, choice.sourceId)
                 val current = _state.value as? DetailState.Loaded ?: return@launch
                 _state.value = current.copy(
                     detail = detail,
                     children = children,
                     subtitleTracks = detail.negotiated?.subtitles ?: emptyList(),
+                    sourceId = choice.sourceId,
+                    automaticSourceId = automaticSourceId,
+                    sourcePinned = pinnedSourceId != null,
                 )
             } catch (e: Exception) {
                 // Best-effort; the screen already has content to show.

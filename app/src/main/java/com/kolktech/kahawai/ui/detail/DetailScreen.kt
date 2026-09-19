@@ -77,6 +77,9 @@ import com.kolktech.kahawai.data.repository.CatalogRepository
 import com.kolktech.kahawai.ui.components.ErrorView
 import com.kolktech.kahawai.ui.components.OnResumeEffect
 import com.kolktech.kahawai.ui.components.WatchProgressBar
+import com.kolktech.kahawai.playback.SourceWork
+import com.kolktech.kahawai.playback.groupSources
+import com.kolktech.kahawai.playback.location
 import com.kolktech.kahawai.ui.player.PlaybackPrefetch
 import com.kolktech.kahawai.ui.player.PrefetchSource
 import com.kolktech.kahawai.util.formatDurationCoarse
@@ -174,6 +177,7 @@ fun DetailScreen(
                     onOpenItem = onOpenItem,
                     onPlay = onPlay,
                     onSelectAudioTrack = viewModel::selectAudioTrackIndex,
+                    onSelectSource = viewModel::selectSource,
                     onSelectSubtitleTrack = viewModel::selectSubtitleTrack,
                     onToggleWatched = viewModel::toggleWatched,
                     playButtonFocusRequester = playButtonFocusRequester,
@@ -217,6 +221,7 @@ private fun DetailContent(
     onOpenItem: (itemId: String, libraryId: String) -> Unit,
     onPlay: (itemId: String, startMs: Long, audioTrack: Int, subtitleTrackId: Long?, prefetch: PlaybackPrefetch) -> Unit,
     onSelectAudioTrack: (Int) -> Unit,
+    onSelectSource: (Int?) -> Unit,
     onSelectSubtitleTrack: (SubtitleTrack?) -> Unit,
     onToggleWatched: () -> Unit,
     playButtonFocusRequester: FocusRequester,
@@ -286,6 +291,9 @@ private fun DetailContent(
                             subtitleTracks = state.subtitleTracks,
                             selectedAudioTrackIndex = state.selectedAudioTrackIndex,
                             sourceId = state.sourceId,
+                            automaticSourceId = state.automaticSourceId,
+                            sourcePinned = state.sourcePinned,
+                            onSelectSource = onSelectSource,
                             selectedSubtitleTrack = state.selectedSubtitleTrack,
                             onSelectAudioTrack = onSelectAudioTrack,
                             onSelectSubtitleTrack = onSelectSubtitleTrack,
@@ -342,6 +350,9 @@ private fun DetailContent(
                             subtitleTracks = state.subtitleTracks,
                             selectedAudioTrackIndex = state.selectedAudioTrackIndex,
                             sourceId = state.sourceId,
+                            automaticSourceId = state.automaticSourceId,
+                            sourcePinned = state.sourcePinned,
+                            onSelectSource = onSelectSource,
                             selectedSubtitleTrack = state.selectedSubtitleTrack,
                             onSelectAudioTrack = onSelectAudioTrack,
                             onSelectSubtitleTrack = onSelectSubtitleTrack,
@@ -377,6 +388,9 @@ private fun DetailInfo(
     subtitleTracks: List<SubtitleTrack>,
     selectedAudioTrackIndex: Int,
     sourceId: Int?,
+    automaticSourceId: Int?,
+    sourcePinned: Boolean,
+    onSelectSource: (Int?) -> Unit,
     selectedSubtitleTrack: SubtitleTrack?,
     onSelectAudioTrack: (Int) -> Unit,
     onSelectSubtitleTrack: (SubtitleTrack?) -> Unit,
@@ -466,6 +480,20 @@ private fun DetailInfo(
             }
         }
 
+        // Only worth a control when there is a choice to make. The
+        // automatic pick is named rather than implied — see SourcePicker.
+        val works = groupSources(detail.sources)
+        if (works.size > 1) {
+            SourcePicker(
+                works = works,
+                selectedSourceId = sourceId,
+                automaticSourceId = automaticSourceId,
+                pinned = sourcePinned,
+                onSelect = onSelectSource,
+                modifier = Modifier.padding(top = 16.dp),
+            )
+        }
+
         if (audioTracks.size > 1) {
             AudioPicker(
                 tracks = audioTracks,
@@ -500,6 +528,94 @@ private fun DetailInfo(
     detail.metadata?.overview?.let {
         Text(it, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 16.dp))
     }
+}
+
+/// Which physical file plays. Two things have to be legible at once: which
+/// source is selected, and which one the hub would choose on its own —
+/// otherwise "automatic" is an invisible default and a hand-picked source
+/// looks identical to the one that was going to play anyway.
+///
+/// So "Automatic" is its own row naming the source it resolves to, every row
+/// carries the location and the part count, and the automatic one is tagged
+/// wherever it appears in the list.
+@Composable
+private fun SourcePicker(
+    works: List<SourceWork>,
+    selectedSourceId: Int?,
+    automaticSourceId: Int?,
+    pinned: Boolean,
+    onSelect: (Int?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var showPicker by remember { mutableStateOf(false) }
+    val automatic = works.firstOrNull { it.sourceId == automaticSourceId }
+    val autoLabel = stringResource(R.string.detail_source_automatic)
+    val selectedWork = works.firstOrNull { it.sourceId == selectedSourceId }
+    val buttonLabel = when {
+        !pinned && automatic != null -> "$autoLabel · ${automatic.summary()}"
+        selectedWork != null -> selectedWork.summary()
+        else -> autoLabel
+    }
+    Column(modifier = modifier) {
+        Text(
+            stringResource(R.string.detail_source),
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.padding(bottom = 4.dp),
+        )
+        OutlinedButton(onClick = { showPicker = true }, modifier = Modifier.fillMaxWidth().dpadFocusBorder()) {
+            Text(buttonLabel, modifier = Modifier.weight(1f), textAlign = TextAlign.Start)
+        }
+    }
+    if (showPicker) {
+        AlertDialog(
+            onDismissRequest = { showPicker = false },
+            confirmButton = {
+                TextButton(onClick = { showPicker = false }) { Text(stringResource(R.string.detail_subtitles_close)) }
+            },
+            title = { Text(stringResource(R.string.detail_source)) },
+            text = {
+                LazyColumn(modifier = Modifier.heightIn(max = 320.dp)) {
+                    item {
+                        SelectableRow(
+                            text = automatic?.let { "$autoLabel · ${it.summary()}" } ?: autoLabel,
+                            selected = !pinned,
+                            onClick = { onSelect(null); showPicker = false },
+                        )
+                    }
+                    items(works) { work ->
+                        val tag = if (work.sourceId == automaticSourceId) {
+                            " · ${stringResource(R.string.detail_source_automatic_tag)}"
+                        } else {
+                            ""
+                        }
+                        SelectableRow(
+                            text = work.summary() + tag,
+                            selected = pinned && work.sourceId == selectedSourceId,
+                            onClick = { onSelect(work.sourceId); showPicker = false },
+                        )
+                    }
+                }
+            },
+        )
+    }
+}
+
+/// One line a viewer can tell two encodes apart by: where it lives, how big
+/// it is, what it is, and whether it can actually play right now.
+@Composable
+private fun SourceWork.summary(): String {
+    val source = first
+    val video = source?.streams?.video?.firstOrNull()
+    val parts = listOfNotNull(
+        location().takeIf { it.isNotBlank() },
+        video?.resolutionLabel()?.takeIf { it.isNotBlank() },
+        video?.codec?.uppercase(),
+        source?.size?.takeIf { it > 0 }?.let { "%.1f GB".format(it / 1_073_741_824.0) },
+        this.parts.size.takeIf { it > 1 }?.let { stringResource(R.string.detail_source_parts, it) },
+        if (!whole) stringResource(R.string.detail_source_incomplete, expectedParts) else null,
+        if (!available) stringResource(R.string.detail_source_offline) else null,
+    )
+    return parts.joinToString(" · ")
 }
 
 @Composable
