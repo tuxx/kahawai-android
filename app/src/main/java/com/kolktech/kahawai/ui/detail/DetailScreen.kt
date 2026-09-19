@@ -79,6 +79,7 @@ import com.kolktech.kahawai.ui.components.OnResumeEffect
 import com.kolktech.kahawai.ui.components.WatchProgressBar
 import com.kolktech.kahawai.playback.SourceWork
 import com.kolktech.kahawai.playback.groupSources
+import com.kolktech.kahawai.playback.resolutionLabel
 import com.kolktech.kahawai.playback.location
 import com.kolktech.kahawai.ui.player.PlaybackPrefetch
 import com.kolktech.kahawai.ui.player.PrefetchSource
@@ -788,19 +789,6 @@ private fun SelectableRow(text: String, selected: Boolean, enabled: Boolean = tr
     }
 }
 
-/// The hub reports DISPLAY dimensions now — rotation already applied —
-/// so a portrait-flagged file no longer labels itself by its coded height.
-private fun ClientVideoStream.resolutionLabel(): String {
-    val height = displayHeight ?: 0
-    return when {
-        height >= 2160 -> "4K"
-        height >= 1080 -> "1080p"
-        height >= 720 -> "720p"
-        height >= 480 -> "480p"
-        height > 0 -> "${height}p"
-        else -> ""
-    }
-}
 
 @Composable
 private fun ClientAudioStream.displayLabel(): String {
