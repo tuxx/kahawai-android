@@ -309,7 +309,6 @@ private fun DetailContent(
                             ChildRow(
                                 child,
                                 onOpenItem,
-                                libraryId,
                                 focusRequester = if (index == 0) firstChildFocusRequester else null,
                             )
                             HorizontalDivider()
@@ -370,7 +369,6 @@ private fun DetailContent(
                     ChildRow(
                         child,
                         onOpenItem,
-                        libraryId,
                         focusRequester = if (index == 0) firstChildFocusRequester else null,
                     )
                     HorizontalDivider()
@@ -828,7 +826,6 @@ private fun ResumeLine(detail: ItemDetail) {
 private fun ChildRow(
     child: Item,
     onOpenItem: (itemId: String, libraryId: String) -> Unit,
-    libraryId: String,
     focusRequester: FocusRequester? = null,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -850,9 +847,7 @@ private fun ChildRow(
                 width = 2.dp,
                 color = if (focused) MaterialTheme.colorScheme.primary else Color.Transparent,
             )
-            // Membership runs through the show, so an episode row rarely
-            // names a library of its own — this screen's own answers for it.
-            .clickable { onOpenItem(child.id, child.libraryId ?: libraryId) }
+            .clickable { onOpenItem(child.id, child.libraryId) }
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
         val label = if (child.kind == "episode") {

@@ -41,8 +41,9 @@ internal class LoadProbe : AnalyticsListener {
         eventTime: AnalyticsListener.EventTime,
         loadEventInfo: LoadEventInfo,
         mediaLoadData: MediaLoadData,
+        retryCount: Int,
     ) {
-        Log.i(LOAD_PROBE_TAG, "started pos=${eventTime.currentPlaybackPositionMs} ${describe(loadEventInfo, mediaLoadData)}")
+        Log.i(LOAD_PROBE_TAG, "started retry=$retryCount pos=${eventTime.currentPlaybackPositionMs} ${describe(loadEventInfo, mediaLoadData)}")
     }
 
     override fun onLoadCompleted(

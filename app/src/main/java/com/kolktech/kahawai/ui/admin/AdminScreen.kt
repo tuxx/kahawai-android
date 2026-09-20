@@ -510,7 +510,7 @@ private fun SessionsSection(sessions: List<AdminSession>, viewModel: AdminViewMo
                 }
                 Text(
                     listOfNotNull(
-                        s.streams?.let { "v: ${it.video ?: "?"} · a: ${it.audio ?: "?"}" },
+                        s.streams?.let { "v: ${it.video.ifEmpty { "?" }} · a: ${it.audio.ifEmpty { "?" }}" },
                         s.username,
                         "idle ${s.idleSecs}s",
                     ).joinToString(" · "),

@@ -106,7 +106,7 @@ fun LibraryScreen(
                         PosterCard(
                             item,
                             repo,
-                            { id -> onOpenItem(id, item.libraryId ?: libraryId) },
+                            { id -> onOpenItem(id, item.libraryId) },
                             focusRequester = if (index == 0) firstItemFocusRequester else null,
                         )
                     }
