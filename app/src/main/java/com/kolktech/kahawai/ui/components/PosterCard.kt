@@ -89,7 +89,7 @@ fun PosterCard(
                 ),
         ) {
             AsyncImage(
-                model = repo.artworkUrl(item.id, item.artVersion, "card"),
+                model = repo.artworkUrl(item.libraryId, item.id, "card"),
                 contentDescription = item.title,
                 contentScale = ContentScale.Crop,
                 // No local cover, unmatched metadata, or a transient fetch

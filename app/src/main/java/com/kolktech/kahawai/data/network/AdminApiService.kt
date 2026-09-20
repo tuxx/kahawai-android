@@ -1,12 +1,11 @@
 package com.kolktech.kahawai.data.network
 
-import com.kolktech.kahawai.data.network.dto.AdminLibrariesResponse
 import com.kolktech.kahawai.data.network.dto.ApproveRequest
 import com.kolktech.kahawai.data.network.dto.ApproveResponse
-import com.kolktech.kahawai.data.network.dto.AttachCollectionRequest
-import com.kolktech.kahawai.data.network.dto.CollectionsResponse
+import com.kolktech.kahawai.data.network.dto.CatalogueMembership
+import com.kolktech.kahawai.data.network.dto.CatalogueCollection
 import com.kolktech.kahawai.data.network.dto.CreateLibraryRequest
-import com.kolktech.kahawai.data.network.dto.CreateLibraryResponse
+import com.kolktech.kahawai.data.network.dto.LibrarySummary
 import com.kolktech.kahawai.data.network.dto.EnrichRunResponse
 import com.kolktech.kahawai.data.network.dto.EnrichStatusResponse
 import com.kolktech.kahawai.data.network.dto.EnrollmentsResponse
@@ -21,13 +20,16 @@ import com.kolktech.kahawai.data.network.dto.SetChainRequest
 import com.kolktech.kahawai.data.network.dto.SetDisabledRequest
 import com.kolktech.kahawai.data.network.dto.SetTmdbRequest
 import com.kolktech.kahawai.data.network.dto.SetTvdbRequest
+import com.kolktech.kahawai.data.network.dto.SetFanartRequest
+import com.kolktech.kahawai.data.network.dto.SetTheAudioDbRequest
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.POST
+import retrofit2.http.PUT
 import retrofit2.http.Path
 
-/// The hub's admin-only `/admin/v1/*` surface (crates/kahawai-hub/src/api.rs:109-176) —
+/// The hub's admin-only `/admin/v1/*` surface (crates/kahawai-hub/src/api.rs) —
 /// requires the JWT `admin` claim; the hub 403s otherwise regardless of
 /// what this client shows/hides. See [ApiService] for the client-facing
 /// `/api/v1/*` surface this sits alongside.
@@ -47,30 +49,27 @@ interface AdminApiService {
     @POST("admin/v1/satellites/{id}/disabled")
     suspend fun setSatelliteDisabled(@Path("id") id: String, @Body body: SetDisabledRequest)
 
-    @GET("admin/v1/libraries")
-    suspend fun libraries(): AdminLibrariesResponse
+    /// There is no admin library LISTING any more: the client-facing
+    /// `GET /api/v1/catalogue/libraries` carries `collection_ids`, which is
+    /// everything the admin screen needs. See [ApiService.libraries].
+    /// Answers with the created library itself, not just its id.
+    @POST("admin/v1/catalogue/libraries")
+    suspend fun createLibrary(@Body body: CreateLibraryRequest): LibrarySummary
 
-    @POST("admin/v1/libraries")
-    suspend fun createLibrary(@Body body: CreateLibraryRequest): CreateLibraryResponse
-
-    @DELETE("admin/v1/libraries/{id}")
+    @DELETE("admin/v1/catalogue/libraries/{id}")
     suspend fun deleteLibrary(@Path("id") id: String)
 
-    @POST("admin/v1/libraries/{id}/collections")
-    suspend fun attachCollection(@Path("id") id: String, @Body body: AttachCollectionRequest)
+    /// Sets the whole membership — attach/detach are gone (see
+    /// [CatalogueMembership]).
+    @PUT("admin/v1/catalogue/libraries/{id}/collections")
+    suspend fun setCollections(@Path("id") id: String, @Body body: CatalogueMembership)
 
-    @DELETE("admin/v1/libraries/{id}/collections/{moduleId}/{collectionId}")
-    suspend fun detachCollection(
-        @Path("id") id: String,
-        @Path("moduleId") moduleId: String,
-        @Path("collectionId") collectionId: String,
-    )
-
-    @POST("admin/v1/libraries/{id}/refresh")
+    @POST("admin/v1/catalogue/libraries/{id}/refresh")
     suspend fun refreshLibrary(@Path("id") id: String): RefreshLibraryResponse
 
-    @GET("admin/v1/collections")
-    suspend fun collections(): CollectionsResponse
+    /// A bare array, like the client-facing library listing.
+    @GET("admin/v1/catalogue/collections")
+    suspend fun collections(): List<CatalogueCollection>
 
     @GET("admin/v1/providers")
     suspend fun providers(): ProvidersResponse
@@ -86,6 +85,17 @@ interface AdminApiService {
 
     @POST("admin/v1/providers/anidb")
     suspend fun setAnidb(@Body body: SetAnidbRequest): SetAnidbResponse
+
+    @POST("admin/v1/providers/fanart")
+    suspend fun setFanart(@Body body: SetFanartRequest): SavedResponse
+
+    @POST("admin/v1/providers/theaudiodb")
+    suspend fun setTheAudioDb(@Body body: SetTheAudioDbRequest): SavedResponse
+
+    /// Detaches a provider's stored credentials without touching the
+    /// chains that name it.
+    @DELETE("admin/v1/providers/{provider}/credentials")
+    suspend fun deleteProviderCredentials(@Path("provider") provider: String)
 
     @GET("admin/v1/enrich")
     suspend fun enrichStatus(): EnrichStatusResponse

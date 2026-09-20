@@ -84,16 +84,17 @@ class HomeViewModel(private val repo: CatalogRepository) : ViewModel() {
     )
 
     private suspend fun fetchHome(): HomeFetch = coroutineScope {
-        // Cross-library and in one request, same as
-        // web/src/views/Libraries.tsx:318 — recency only means anything
+        // Cross-library and in one request — recency only means anything
         // across the whole set, and a per-library fetch could not be
         // merged since the hub doesn't return the timestamp it sorted by.
+        // It is its own endpoint now rather than a flag on the item list,
+        // and each row names the library it came from.
         val continueWatchingDeferred = async {
-            repo.items(inProgress = true, limit = CONTINUE_WATCHING_SIZE).items
+            repo.continueWatching(limit = CONTINUE_WATCHING_SIZE).items
         }
-        // Same reasoning, its own endpoint (api.rs `up_next`): the series'
-        // last-watched timestamp that orders this row isn't part of an item
-        // row either, so it has to be a cross-library call too.
+        // Same reasoning, its own endpoint: the series' last-watched
+        // timestamp that orders this row isn't part of an item row either,
+        // so it has to be a cross-library call too.
         val upNextDeferred = async {
             repo.upNext(limit = UP_NEXT_SIZE).items
         }

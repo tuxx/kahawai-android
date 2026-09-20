@@ -81,7 +81,7 @@ object CapabilityProfileBuilder {
         // platform's surround settings plus what the HDMI device reports —
         // so this answer follows the receiver the box is plugged into today,
         // which is why the profile is rebuilt per session rather than cached.
-        val caps = AudioCapabilities.getCapabilities(context)
+        val caps = AudioCapabilities.getCapabilities(context, AudioAttributes.DEFAULT, null, emptyList())
         val audioSupport = audioSupport(
             decodable = decodedMimes,
             passthroughChannels = { mime -> passthroughChannels(caps, mime) },

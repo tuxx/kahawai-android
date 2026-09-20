@@ -44,7 +44,9 @@ import com.kolktech.kahawai.data.network.dto.Item
 import com.kolktech.kahawai.data.network.dto.Pref
 import com.kolktech.kahawai.data.network.dto.Segment
 import com.kolktech.kahawai.data.network.dto.StartSessionResponse
+import com.kolktech.kahawai.data.network.dto.ClientAudioStream
 import com.kolktech.kahawai.data.network.dto.SubtitleTrack
+import com.kolktech.kahawai.data.network.isSessionGone
 import com.kolktech.kahawai.data.network.readableMessage
 import com.kolktech.kahawai.data.repository.CatalogRepository
 import com.kolktech.kahawai.data.repository.PlaybackRepository
@@ -52,15 +54,17 @@ import com.kolktech.kahawai.data.repository.PreferencesRepository
 import com.kolktech.kahawai.playback.CapabilityProfileBuilder
 import com.kolktech.kahawai.playback.IMAGE_FORMATS
 import com.kolktech.kahawai.playback.PREF_AUDIO
+import com.kolktech.kahawai.playback.SessionKeepalive
 import com.kolktech.kahawai.playback.langEq
 import com.kolktech.kahawai.playback.needsMediaType
 import com.kolktech.kahawai.playback.rememberedAudioValue
-import com.kolktech.kahawai.playback.resolveAudioTrack
+import com.kolktech.kahawai.playback.negotiatePlayback
 import com.kolktech.kahawai.playback.PREF_SUBS
 import com.kolktech.kahawai.playback.PREF_SUBS_TRACK
 import com.kolktech.kahawai.playback.rememberedSubsTrackValue
 import com.kolktech.kahawai.playback.rememberedSubsValue
 import com.kolktech.kahawai.playback.resolveSubtitleTrack
+import com.kolktech.kahawai.playback.sourcePreferenceScope
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
 
@@ -90,18 +94,35 @@ sealed interface PlayerState {
 /// `subs-{id}.ass` tap only exists for Remux/Transcode sessions — the
 /// hub's session_file handler no-ops it for Mode::Direct (the raw file
 /// is served byte-for-byte with no server-side pipeline to tap), so a
-/// direct-mode session must fall back straight to the item-scoped
-/// `/items/{id}/subtitles/{id}.ass` whole-file-extraction endpoint
+/// direct-mode session falls back to the whole-file-extraction endpoint
 /// instead (see AssSubtitleOverlay).
+///
+/// That fallback hangs off the SESSION now rather than off the item —
+/// `/api/v1/playback/sessions/{id}/subtitles/{track}.{ext}`, which is why
+/// [sessionId] travels with this. Fonts moved the same way: they are a
+/// property of the negotiated source, which only a session names.
 data class SubtitleSession(
+    val sessionId: String,
     val streamBaseUrl: String,
     val isHls: Boolean,
     val epoch: Int,
 )
 
-/// Progress cadence matches the web client (web/src/views/Player.tsx:678-710):
-/// every 10s while playing, plus on pause and on teardown.
+/// Progress cadence matches the web client: every 10s, plus on pause and on
+/// teardown.
 private const val PROGRESS_INTERVAL_MS = 10_000L
+
+/// How long the ping keeps going once the playhead stops moving — the bound
+/// on [PROGRESS_INTERVAL_MS], ported from web/src/domain/keepalive.ts.
+///
+/// The hub reaps a session after 90s with no fetch and no progress ping
+/// (HUB-18), which is right for an abandoned session and wrong for a present
+/// one: a player stops fetching far more often than it stops existing, and a
+/// pause with a full buffer reads no bytes at all. So the ping is a liveness
+/// signal and goes out whether or not the playhead is moving — but bounded,
+/// because the reaper is right about the case it was built for. Someone who
+/// paused and walked away must not hold a transcoder slot all night.
+private const val IDLE_PING_LIMIT_MS = 30 * 60_000L
 
 /// How long onBackgrounded() waits before actually stopping the player —
 /// see its doc for why this is debounced rather than immediate.
@@ -277,8 +298,8 @@ internal fun isHdrTransfer(format: Format?): Boolean =
 /// offsetMs: the hub shifts the VTT's own cue timestamps to line up with
 /// the player's absolute position, which is offsetMs AHEAD of the file's
 /// local time — so cues must be shifted BACK by that amount.
-internal fun subtitleVttUrl(baseUrl: String, itemId: String, trackId: Long, offsetMs: Long): String =
-    "${baseUrl.trimEnd('/')}/api/v1/items/$itemId/subtitles/$trackId.vtt?shift_ms=${-offsetMs}"
+internal fun subtitleVttUrl(baseUrl: String, sessionId: String, trackId: Long, offsetMs: Long): String =
+    "${baseUrl.trimEnd('/')}/api/v1/playback/sessions/$sessionId/subtitles/$trackId.vtt?shift_ms=${-offsetMs}"
 
 /// How much of the produced HLS window's tail to treat as out of reach
 /// for a local seek. The hub keeps extending the playlist as it encodes,
@@ -369,7 +390,7 @@ class PlayerViewModel(
     /// Which library this item was opened from, carried by the route: the
     /// item's own detail doesn't name one, and without it the account's
     /// per-media-type track lists can't be found at all — see TrackChoice.
-    private val libraryId: String? = null,
+    private val libraryId: String,
     /// See [PlaybackPrefetch]: the Detail screen's own itemQuery, reused
     /// here instead of repeated. Null for a navigation that skipped
     /// Detail (auto-advance, the in-player "<"/">" buttons), in which
@@ -645,7 +666,7 @@ class PlayerViewModel(
     /// slightly differently (==, !=, takeIf) — harmless today, but exactly
     /// the kind of repetition where a future fix lands in five of the six
     /// spots and not the sixth.
-    private val isDirect: Boolean
+    internal val isDirect: Boolean
         get() = session?.mode == "direct"
 
     /// The audio stream every start of this item uses — resolved once from
@@ -655,7 +676,22 @@ class PlayerViewModel(
 
     /// The scope track picks are remembered under — see start().
     private var seriesId: String? = null
+
+    /// The item's sources, from the prefetch or this screen's own QUERY.
+    /// Names the scope an exact track choice belongs to (see
+    /// [sourcePreferenceScope]) and carries the audio streams the picker
+    /// lists for a session the hub muxed down to one track.
+    private var sources: List<PrefetchSource> = emptyList()
+
+    /// The source the negotiation chose. Sessions are PINNED to it: audio
+    /// indexes and subtitle track ids are per-source, so letting a restart
+    /// re-negotiate freely would silently reinterpret both.
+    private var negotiatedSourceId: Int? = null
     private var prefsJob: Job? = null
+
+    /// The lost session a progress recovery has already been tried for, so
+    /// a hub that keeps refusing is asked once rather than every tick.
+    private var progressRecoveryFor: String? = null
 
     /// The START of what a seek can reach without waiting on the hub: the
     /// absolute position the current playlist begins at, since nothing
@@ -822,10 +858,21 @@ class PlayerViewModel(
     ): StartSessionResponse {
         val newSession = repo.startSession(
             itemId,
+            libraryId,
             profile,
             positionMs,
             audioTrack = audioTrack,
             subtitleTrack = subtitleTrackId,
+            // Pinned, not re-negotiated: [audioTrack] is an index INTO this
+            // source and the subtitle ids belong to it too, so a restart
+            // that picked a different source would reinterpret both against
+            // a file they never described.
+            mediaEntryId = sources.firstOrNull { it.sourceId == negotiatedSourceId }?.mediaEntryId,
+            // What the last session reported for the file it played. The
+            // hub uses it to tell whether [positionMs] still refers to the
+            // same physical source, and says where it actually started in
+            // `effectiveStartMs` when it does not.
+            resumeSourceFingerprint = session?.sourceFingerprint,
         )
         session = newSession
         applySessionSubtitleListing(newSession)
@@ -844,7 +891,7 @@ class PlayerViewModel(
         _state.value = PlayerState.Loading
         viewModelScope.launch {
             try {
-                val detail = catalogRepo.item(itemId)
+                val detail = catalogRepo.item(libraryId, itemId)
                 _title.value = if (detail.kind == "episode" && detail.season != null && detail.episode != null) {
                     val seasonEpisode = "S%02dE%02d".format(detail.season, detail.episode)
                     listOfNotNull(seasonEpisode, detail.title, detail.parentTitle).joinToString(" - ")
@@ -853,7 +900,7 @@ class PlayerViewModel(
                 }
                 val parentId = detail.parentId
                 if (detail.kind == "episode" && parentId != null) {
-                    val siblings = catalogRepo.children(parentId)
+                    val siblings = catalogRepo.children(libraryId, parentId)
                     _adjacentEpisodes.value = AdjacentEpisodes(
                         previousId = resolvePreviousEpisode(detail.kind, parentId, itemId, siblings),
                         nextId = resolveNextEpisode(detail.kind, parentId, itemId, siblings),
@@ -883,6 +930,9 @@ class PlayerViewModel(
                     // the no-prefetch branch below, an id that doesn't
                     // match is exactly "no subtitle", not "unresolved".
                     tracks = prefetched.subtitleTracks
+                    sources = prefetched.sources
+                    negotiatedSourceId = prefetched.sourceId
+                    if (initialAudioTrack < 0) audioTrack = prefetched.audioTrack
                     _subtitleTracks.value = tracks
                     _segments.value = prefetched.segments
                     _chapters.value = prefetched.chapters
@@ -911,17 +961,31 @@ class PlayerViewModel(
                         runCatching { catalogRepo.libraries() }.getOrDefault(emptyList())
                     }
                     suspend fun mediaType(known: List<Pref>): String =
-                        if (needsMediaType(known) && libraryId != null) {
+                        if (needsMediaType(known)) {
                             libraries.await().firstOrNull { it.id == libraryId }?.mediaType ?: ""
                         } else {
                             ""
                         }
-                    val queried = try {
-                        repo.itemQuery(itemId, profile)
+                    // Negotiated, not a single QUERY: the first answer can
+                    // only rank sources on audio index 0, and this path (auto-
+                    // advance, "<"/">") has no Detail screen to have done the
+                    // re-ranking for it. Best-effort like the query it
+                    // replaces — a failure costs the picker entries and the
+                    // skip marks, not the session.
+                    val choice = try {
+                        negotiatePlayback(
+                            repo = catalogRepo,
+                            libraryId = libraryId,
+                            itemId = itemId,
+                            profile = profile,
+                            prefs = prefs.await(),
+                            mediaType = mediaType(prefs.await()),
+                        )
                     } catch (e: Exception) {
                         Log.w(TAG, "Failed to query item=$itemId for subtitles/segments/chapters", e)
                         null
                     }
+                    val queried = choice?.item
                     tracks = queried?.negotiated?.subtitles ?: emptyList()
                     _subtitleTracks.value = tracks
                     _segments.value = queried?.segments ?: emptyList()
@@ -932,30 +996,34 @@ class PlayerViewModel(
                     // film's scope is anyway, and all an episode whose
                     // QUERY failed can offer.
                     seriesId = queried?.parentId ?: itemId
+                    sources = queried?.sources.orEmpty().map {
+                        PrefetchSource(
+                            sourceId = it.sourceId,
+                            copyId = it.collectionItemId,
+                            mediaEntryId = it.mediaEntryId,
+                            audio = it.streams?.audio.orEmpty(),
+                        )
+                    }
+                    negotiatedSourceId = choice?.sourceId
+                    // Exact track choices are the negotiated SOURCE's, not
+                    // the item's — see sourcePreferenceScope.
+                    val querySourceScope = sourceScopeFor(negotiatedSourceId)
                     // Nothing carried, or an id this item doesn't have,
                     // falls to the remembered preferences. The second case
                     // is the one that matters: auto-advance carries the
                     // track id of the episode that just ended, and ids
                     // don't survive the file boundary — which is exactly
                     // what the series-scoped language memory is for.
-                    if (initialAudioTrack < 0) {
-                        audioTrack = prefs.await().let { known ->
-                            resolveAudioTrack(
-                                prefs = known,
-                                seriesId = seriesId ?: itemId,
-                                itemId = itemId,
-                                mediaType = mediaType(known),
-                                originalLanguage = queried?.metadata?.originalLanguage,
-                                audio = queried?.sources?.firstOrNull()?.streams?.audio ?: emptyList(),
-                            )
-                        }
-                    }
+                    // The negotiation already resolved this against the
+                    // source it chose; an index carried in from the route
+                    // (an explicit pick) still wins.
+                    if (initialAudioTrack < 0) audioTrack = choice?.audioTrack ?: 0
                     initialTrack = tracks.firstOrNull { it.id == initialSubtitleTrackId }
                         ?: prefs.await().let { known ->
                             resolveSubtitleTrack(
                                 prefs = known,
                                 seriesId = seriesId ?: itemId,
-                                itemId = itemId,
+                                sourceScope = querySourceScope,
                                 mediaType = mediaType(known),
                                 tracks = tracks,
                             )
@@ -1129,13 +1197,13 @@ class PlayerViewModel(
         progressJob?.cancel()
         viewModelScope.launch {
             try {
-                val detail = catalogRepo.item(itemId)
+                val detail = catalogRepo.item(libraryId, itemId)
                 val parentId = detail.parentId
                 if (detail.kind != "episode" || parentId == null) {
                     _playbackFinished.value = true
                     return@launch
                 }
-                val siblings = catalogRepo.children(parentId)
+                val siblings = catalogRepo.children(libraryId, parentId)
                 val nextId = resolveNextEpisode(detail.kind, parentId, itemId, siblings)
                 if (nextId != null) {
                     Log.d(TAG, "auto-advancing item=$itemId -> next=$nextId")
@@ -1400,6 +1468,7 @@ class PlayerViewModel(
         val uri = ApiClient.baseUrl().trimEnd('/') + session.streamUrl
         val streamBaseUrl = uri.substringBeforeLast('/') + "/"
         _subtitleSession.value = SubtitleSession(
+            sessionId = session.sessionId,
             streamBaseUrl = streamBaseUrl,
             isHls = session.mode != "direct",
             epoch = subtitleEpoch,
@@ -1531,6 +1600,17 @@ class PlayerViewModel(
         if (session.mode == "direct") return // shift is always 0 for direct
         if (attachedVttShiftMs == offsetMs) return
         Log.d(TAG, "rebaking VTT shift item=$itemId stale=$attachedVttShiftMs fresh=$offsetMs")
+        reprepareInPlace()
+    }
+
+    /// Rebuild and re-prepare the current session's MediaItem without
+    /// disturbing where the viewer is: position is playlist-local and the
+    /// playlist itself is unchanged, so handing it back as startPositionMs
+    /// resumes in place. Used whenever the item's own
+    /// SubtitleConfigurations change — a text pick, or the shift baked into
+    /// their URLs going stale.
+    private fun reprepareInPlace() {
+        val session = session ?: return
         val resumeLocalMs = realPlayer.currentPosition
         val wasPlaying = realPlayer.playWhenReady
         realPlayer.setMediaItem(buildMediaItem(session), resumeLocalMs)
@@ -1547,17 +1627,37 @@ class PlayerViewModel(
     /// offsetMs changes on every seek-restart. For "direct" sessions
     /// offsetMs is pinned to 0 (the native timeline is already absolute),
     /// so the shift correctly evaluates to 0 there.
-    private fun textDeliverySubtitleConfigs(): List<MediaItem.SubtitleConfiguration> =
-        _subtitleTracks.value
-            .filter { it.delivery == "text" }
+    /// Only the SELECTED text track, not every one on offer.
+    ///
+    /// Sideloading them all bought instant switching, and cost the ability
+    /// to play some items at all: one episode listing 38 text tracks became
+    /// a 39-way MergingMediaSource, fetched 38 VTT files up front, and drove
+    /// the heap to its ceiling (0% free of 165MB, seconds of blocking GC).
+    /// Under that pressure the deselect/reselect race in
+    /// ProgressiveMediaPeriod.selectTracks trips its
+    /// checkState(isPendingReset()) and kills playback, which session
+    /// recovery then restarts straight back into.
+    ///
+    /// One track is one extra period and one fetch. The cost is that
+    /// changing a text pick now re-prepares the item in place
+    /// (see [selectSubtitleTrack]) instead of being a pure track-selection
+    /// override — about a second, against an episode that could not be
+    /// watched.
+    ///
+    /// Empty without a session: the VTT tap is session-scoped, so there is
+    /// no URL to sideload until one exists.
+    private fun textDeliverySubtitleConfigs(): List<MediaItem.SubtitleConfiguration> {
+        val sessionId = session?.sessionId ?: return emptyList()
+        return listOfNotNull(_selectedSubtitleTrack.value?.takeIf { it.delivery == "text" })
             .map { track ->
-                val vttUrl = subtitleVttUrl(ApiClient.baseUrl(), itemId, track.id, offsetMs)
+                val vttUrl = subtitleVttUrl(ApiClient.baseUrl(), sessionId, track.id, offsetMs)
                 MediaItem.SubtitleConfiguration.Builder(Uri.parse(vttUrl))
                     .setMimeType(MimeTypes.TEXT_VTT)
                     .setLanguage(track.language)
                     .setId(track.id.toString())
                     .build()
             }
+    }
 
     /// Reapplies the current [selectedSubtitleTrack] as a
     /// TrackSelectionOverride against whatever text tracks the
@@ -1567,56 +1667,82 @@ class PlayerViewModel(
     /// hands straight to media3's own parsers ([isNativeBitmapPick]).
     /// Ass delivery, and overlay delivery in every other shape, are read
     /// out of band and are never part of ExoPlayer's track groups.
+    /// Installs the TEXT override for the current pick, if the group it
+    /// names is actually present yet.
+    ///
+    /// Two rules here exist to stop a deselect/reselect churn that crashes
+    /// ExoPlayer outright on an item with many sideloaded VTT tracks
+    /// (38 on one episode). `ProgressiveMediaPeriod.selectTracks` cancels a
+    /// load when the last enabled track of a period is deselected mid-load
+    /// without arming a pending reset, and the resulting
+    /// `onContinueLoadingRequested` trips `checkState(isPendingReset())` in
+    /// `startLoading` — an IllegalStateException that kills playback, which
+    /// session recovery then restarts into the same race.
+    ///
+    /// So: the renderer is enabled ONLY with an override in hand. Enabling
+    /// it while the wanted group has not arrived leaves the selector free to
+    /// auto-pick one of the other periods — one this method is about to take
+    /// away again on the next firing, which is the deselect that starts the
+    /// whole thing. No subtitles for a moment longer is the right trade
+    /// against a random one and a crash.
+    ///
+    /// And: nothing is written unless it changes. This runs on every
+    /// `onTracksChanged`, and re-asserting the same clear-and-re-add while
+    /// dozens of VTT loads are in flight is exactly the churn that finds the
+    /// race.
     private fun applySubtitleTrackSelectionOverride() {
         val selected = _selectedSubtitleTrack.value
         val textTrack = selected?.takeIf { it.delivery == "text" }
         val bitmapTrack = selected?.takeIf { isNativeBitmapPick(it, isDirect) }
+        val groups = realPlayer.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
+        val override = when {
+            bitmapTrack != null -> {
+                // Found by what it IS, not by an id: this track came out of
+                // the file itself, so there's no sideloaded id to match on
+                // and the container's own numbering need not agree with the
+                // hub's stream indices. See nativeBitmapGroupIndex.
+                val infos = groups.map {
+                    val format = it.mediaTrackGroup.getFormat(0)
+                    TextTrackInfo(format.sampleMimeType, format.codecs, format.language)
+                }
+                val index = embeddedBitmapOrdinal(_subtitleTracks.value, bitmapTrack)
+                    ?.let { ordinal -> nativeBitmapGroupIndex(infos, ordinal, bitmapTrack.language) }
+                Log.i(TAG, "bitmap override: want=${bitmapTrack.id} matched=${index != null} textGroups=$infos")
+                index?.let { TrackSelectionOverride(groups[it].mediaTrackGroup, 0) }
+            }
+            textTrack != null -> {
+                // MergingMediaPeriod re-exposes every child source's formats
+                // with the id rewritten to "<childIndex>:<originalId>"
+                // (uniqueness across children — confirmed in 1.10.0
+                // bytecode), so the sideloaded VTT config's id "1234"
+                // surfaces here as e.g. "1:1234" and an exact comparison
+                // never matched — the override was silently skipped and
+                // text tracks never turned on. The hub's HLS playlists carry
+                // no subtitle renditions of their own, so every TEXT group
+                // is one of ours and suffix matching is unambiguous.
+                val wantedId = textTrack.id.toString()
+                val group = groups.firstOrNull {
+                    matchesSideloadedTrackId(it.mediaTrackGroup.getFormat(0).id, wantedId)
+                }
+                // Log.i, not Log.d: the vivo test device suppresses D-level
+                // logcat output entirely, and this is the one line that says
+                // whether a text pick actually engaged.
+                Log.i(
+                    TAG,
+                    "text override: want=$wantedId matched=${group != null} " +
+                        "textGroups=${groups.map { it.mediaTrackGroup.getFormat(0).id }}",
+                )
+                group?.let { TrackSelectionOverride(it.mediaTrackGroup, 0) }
+            }
+            else -> null
+        }
         val params = realPlayer.trackSelectionParameters.buildUpon()
             .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-            // Disabled unless a pick this pipeline renders is live — see the
-            // ExoPlayer.Builder note above: leaving the renderer enabled lets
-            // the selector pick a text track we never asked for.
-            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, textTrack == null && bitmapTrack == null)
-        if (bitmapTrack != null) {
-            // Found by what it IS, not by an id: this track came out of the
-            // file itself, so there's no sideloaded id to match on and the
-            // container's own numbering need not agree with the hub's stream
-            // indices. See nativeBitmapGroupIndex.
-            val groups = realPlayer.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
-            val infos = groups.map {
-                val format = it.mediaTrackGroup.getFormat(0)
-                TextTrackInfo(format.sampleMimeType, format.codecs, format.language)
-            }
-            val index = embeddedBitmapOrdinal(_subtitleTracks.value, bitmapTrack)
-                ?.let { ordinal -> nativeBitmapGroupIndex(infos, ordinal, bitmapTrack.language) }
-            // Log.i for the same reason as the text override below.
-            Log.i(TAG, "bitmap override: want=${bitmapTrack.id} matched=${index != null} textGroups=$infos")
-            if (index != null) params.addOverride(TrackSelectionOverride(groups[index].mediaTrackGroup, 0))
-        } else if (textTrack != null) {
-            // MergingMediaPeriod re-exposes every child source's formats
-            // with the id rewritten to "<childIndex>:<originalId>"
-            // (uniqueness across children — confirmed in 1.10.0
-            // bytecode), so the sideloaded VTT config's id "1234"
-            // surfaces here as e.g. "1:1234" and an exact comparison
-            // never matched — the override was silently skipped and
-            // text tracks never turned on. The hub's HLS playlists carry
-            // no subtitle renditions of their own, so every TEXT group
-            // is one of ours and suffix matching is unambiguous.
-            val wantedId = textTrack.id.toString()
-            val group = realPlayer.currentTracks.groups.firstOrNull {
-                it.type == C.TRACK_TYPE_TEXT && matchesSideloadedTrackId(it.mediaTrackGroup.getFormat(0).id, wantedId)
-            }
-            // Log.i, not Log.d: the vivo test device suppresses D-level
-            // logcat output entirely, and this is the one line that says
-            // whether a text pick actually engaged.
-            Log.i(
-                TAG,
-                "text override: want=$wantedId matched=${group != null} " +
-                    "textGroups=${realPlayer.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }.map { it.mediaTrackGroup.getFormat(0).id }}",
-            )
-            if (group != null) params.addOverride(TrackSelectionOverride(group.mediaTrackGroup, 0))
-        }
-        realPlayer.trackSelectionParameters = params.build()
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, override == null)
+            .also { builder -> override?.let { builder.addOverride(it) } }
+            .build()
+        if (params == realPlayer.trackSelectionParameters) return
+        realPlayer.trackSelectionParameters = params
     }
 
     /// A "direct" session serves the file byte-for-byte with every
@@ -1681,8 +1807,62 @@ class PlayerViewModel(
             // render off by the snap delta — the rebake (a no-op when the
             // baked shift is still current) settles that first; its
             // re-prepare path applies the override via onTracksChanged.
-            if (track?.delivery == "text") rebakeTextSubtitleShiftIfNeeded()
-            applySubtitleTrackSelectionOverride()
+            // Only the selected text track is sideloaded (see
+            // textDeliverySubtitleConfigs), so a text pick changes the
+            // MediaItem's own configuration list and needs the item
+            // re-prepared rather than a selection override over tracks that
+            // are not there. Leaving text does too: it drops the one that
+            // was. onTracksChanged applies the override once the new tracks
+            // land.
+            if (track?.delivery == "text" || previous?.delivery == "text") {
+                reprepareInPlace()
+            } else {
+                applySubtitleTrackSelectionOverride()
+            }
+        }
+    }
+
+    /// An audio pick from the player's own menu.
+    ///
+    /// A "direct" session carries every track in the container, so the
+    /// switch is a track-selection override and instant. A remux/transcode
+    /// session carries exactly the one stream the hub muxed — ExoPlayer has
+    /// nothing to switch between — so the pipeline restarts at the current
+    /// position with the new index (`SeekRequest.audioTrack`), the same
+    /// ~2 s hiccup as a deep seek. [index] is into [negotiatedAudio], which
+    /// is the hub's own per-source order either way.
+    fun selectAudioTrackIndex(index: Int) {
+        val streams = negotiatedAudio()
+        if (index !in streams.indices) return
+        audioTrack = index
+        rememberAudioLanguage(streams[index].language)
+        if (isDirect) {
+            applyAudioTrackSelectionOverride()
+            return
+        }
+        val active = session ?: return
+        val previousSeek = seekJob
+        seekJob = viewModelScope.launch {
+            previousSeek?.cancelAndJoin()
+            val positionMs = offsetMs + realPlayer.currentPosition
+            try {
+                internalPause = true
+                realPlayer.pause()
+                repo.seek(active.sessionId, positionMs, audioTrack = index)
+                // Same reasoning as handleSeek: offsetMs is the absolute
+                // position this fresh playlist begins at.
+                offsetMs = positionMs
+                attach(active, startPositionMs = 0, requestedAbsMs = positionMs)
+                internalPause = false
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "audio switch failed item=$itemId index=$index", e)
+                internalPause = false
+                realPlayer.play()
+                _transientError.value = getApplication<Application>()
+                    .getString(R.string.player_audio_switch_failed, e.readableMessage())
+            }
         }
     }
 
@@ -1720,14 +1900,35 @@ class PlayerViewModel(
             previous?.join()
             runCatching {
                 prefsRepo.put(series, PREF_SUBS, rememberedSubsValue(track))
-                prefsRepo.put(itemId, PREF_SUBS_TRACK, rememberedSubsTrackValue(track))
+                // Against the source actually playing — a track id means
+                // nothing against a different file.
+                sessionSourceScope()?.let { prefsRepo.put(it, PREF_SUBS_TRACK, rememberedSubsTrackValue(track)) }
             }.onFailure { Log.w(TAG, "failed to remember subtitle pick item=$itemId", it) }
         }
     }
 
+    /// The scope an exact track choice belongs to for the session actually
+    /// playing: the session reports which source it negotiated, and
+    /// [sourceCopies] names the copy behind it.
+    private fun sessionSourceScope(): String? = sourceScopeFor(session?.sourceId)
+
+    private fun sourceScopeFor(sourceId: Int?): String? =
+        sourcePreferenceScope(sources.firstOrNull { it.sourceId == sourceId }?.copyId, sourceId)
+
+    /// The audio streams of the source actually being served — what the
+    /// hub's [audioTrack] indexes into, and what the player's own picker
+    /// must list for a remux/transcode session, where ExoPlayer only ever
+    /// sees the single track the hub muxed.
+    /// The index currently being served, for the picker's checkmark.
+    internal val currentAudioTrack: Int get() = audioTrack
+
+    internal fun negotiatedAudio(): List<ClientAudioStream> =
+        sources.firstOrNull { it.sourceId == (session?.sourceId ?: negotiatedSourceId) }?.audio.orEmpty()
+
     private fun startProgressLoop() {
         progressJob?.cancel()
         progressJob = viewModelScope.launch {
+            val keepalive = SessionKeepalive(PROGRESS_INTERVAL_MS, IDLE_PING_LIMIT_MS)
             while (isActive) {
                 delay(PROGRESS_INTERVAL_MS)
                 // Diagnostic: onPlaybackStateChanged only logs on
@@ -1758,7 +1959,15 @@ class PlayerViewModel(
                 // buffering, exactly like `!paused`, and only goes false
                 // on the explicit pause() handleSeek() already does
                 // before restarting.
-                if (realPlayer.playWhenReady) reportProgressNow()
+                // NOT gated on playWhenReady any more. That gate matched the
+                // web client's old `if (!video.paused) report()`, and it is
+                // what let a pause longer than the hub's 90s idle timeout
+                // reap the session out from under a viewer who was still
+                // there — after which every report 404s and the watched time
+                // is lost. A direct session hides that completely: its
+                // transfer is already open and keeps delivering bytes, so
+                // playback continues perfectly while nothing is recorded.
+                if (keepalive.shouldPing(offsetMs + realPlayer.currentPosition)) reportProgressNow()
             }
         }
     }
@@ -1772,7 +1981,47 @@ class PlayerViewModel(
                 Log.d(TAG, "progress reported sessionId=${session.sessionId} positionMs=$positionMs")
             } catch (e: Exception) {
                 Log.w(TAG, "progress report failed sessionId=${session.sessionId} positionMs=$positionMs", e)
-                // Best-effort, like the web client's beforeunload report.
+                // A network blip is best-effort, like the web client's
+                // beforeunload report — the next tick carries a newer
+                // position anyway. A session the hub no longer has is not:
+                // see recoverProgressSession.
+                if (e.isSessionGone()) recoverProgressSession(session.sessionId)
+            }
+        }
+    }
+
+    /// The hub has lost the session this playback reports into, so every
+    /// later report will fail the same way and everything watched since the
+    /// last good one is gone. Observed on a real session: reports 404ed for
+    /// twelve minutes while the film played on, and the next resume landed
+    /// where the last successful report had been.
+    ///
+    /// Re-establish one at the current position so the hub starts recording
+    /// again. That re-attaches the stream too — the pipeline behind the old
+    /// session went with it, so playing on was already borrowed time — which
+    /// costs a brief re-buffer and is the cheaper half of the trade against
+    /// losing the rest of the film's progress.
+    ///
+    /// At most one attempt per lost session, and playback is left alone if
+    /// it fails: a hub that cannot start a session would otherwise be asked
+    /// again every ten seconds for the rest of the film, and a viewer whose
+    /// picture is still fine should not be dropped onto an error screen over
+    /// bookkeeping. They are told, once, that it stopped being saved.
+    private fun recoverProgressSession(goneSessionId: String) {
+        if (progressRecoveryFor == goneSessionId) return
+        progressRecoveryFor = goneSessionId
+        viewModelScope.launch {
+            val positionMs = offsetMs + realPlayer.currentPosition
+            Log.w(TAG, "progress session gone item=$itemId sessionId=$goneSessionId positionMs=$positionMs")
+            try {
+                val profile = CapabilityProfileBuilder.build(getApplication())
+                val fresh = startSessionAndAttach(profile, positionMs, burnPickOrNull(_selectedSubtitleTrack.value))
+                Log.w(TAG, "progress session recovered item=$itemId newSessionId=${fresh.sessionId}")
+            } catch (e: Exception) {
+                Log.w(TAG, "progress session recovery failed item=$itemId", e)
+                progressJob?.cancel()
+                _transientError.value = getApplication<Application>()
+                    .getString(R.string.player_progress_not_saved)
             }
         }
     }

@@ -53,19 +53,19 @@ class HomeViewModelTest {
 
     private val noneInProgress = MockResponse().setBody("""{"items":[],"total":0,"limit":12,"offset":0}""")
     private val oneLibrary =
-        MockResponse().setBody("""{"libraries":[{"id":"lib1","name":"Movies","media_type":"video"}]}""")
+        MockResponse().setBody("""[{"id":"lib1","name":"Movies","media_type":"movies"}]""")
 
     private fun libraryItems(title: String) = MockResponse().setBody(
-        """{"items":[{"id":"i1","kind":"movie","title":"$title"}],"total":1,"limit":20,"offset":0}""",
+        """{"items":[{"id":"i1","kind":"movie","media_type":"movies","title":"$title","representative_id":"c1:1","copy_ids":["c1:1"],"metadata":{"description":{},"provenance":{}},"played":false}],"total":1,"limit":20,"offset":0}""",
     )
 
     private val emptyUpNext = MockResponse().setBody("""{"items":[],"total":0,"limit":12,"offset":0}""")
 
     private fun homeDispatcher(libraryResponse: MockResponse) = routeBy(
-        { r: RecordedRequest -> r.path?.contains("in_progress=true") == true } to noneInProgress,
-        { r: RecordedRequest -> r.path?.startsWith("/api/v1/up-next") == true } to emptyUpNext,
-        { r: RecordedRequest -> r.path == "/api/v1/libraries" } to oneLibrary,
-        { r: RecordedRequest -> r.path?.contains("library=lib1") == true } to libraryResponse,
+        { r: RecordedRequest -> r.path?.startsWith("/api/v1/catalogue/continue-watching") == true } to noneInProgress,
+        { r: RecordedRequest -> r.path?.startsWith("/api/v1/catalogue/up-next") == true } to emptyUpNext,
+        { r: RecordedRequest -> r.path == "/api/v1/catalogue/libraries" } to oneLibrary,
+        { r: RecordedRequest -> r.path?.startsWith("/api/v1/catalogue/libraries/lib1/items") == true } to libraryResponse,
     )
 
     @Test
@@ -86,13 +86,24 @@ class HomeViewModelTest {
     @Test
     fun `load surfaces up-next episodes alongside library rows`() = runTest {
         val upNext = MockResponse().setBody(
-            """{"items":[{"id":"e2","kind":"episode","title":"Ep 2"}],"total":1,"limit":12,"offset":0}""",
+            """
+            {"items":[{
+              "id":"show1","kind":"series","media_type":"series","title":"Show",
+              "representative_id":"c1:1","copy_ids":["c1:1"],
+              "metadata":{"description":{},"provenance":{}},"played":false,
+              "library_id":"lib1","parent_title":"Show",
+              "child":{"id":"child1:e2","parent_id":"show1","representative_id":"c1:2","title":"Ep 2",
+                "position":{"kind":"episode","season":1,"episode":2},"source_count":1,
+                "metadata":{"description":{},"provenance":{}}}
+            }],"total":1,"limit":12,"offset":0}
+            """.trimIndent(),
         )
         server.dispatcher = routeBy(
-            { r: RecordedRequest -> r.path?.contains("in_progress=true") == true } to noneInProgress,
-            { r: RecordedRequest -> r.path?.startsWith("/api/v1/up-next") == true } to upNext,
-            { r: RecordedRequest -> r.path == "/api/v1/libraries" } to oneLibrary,
-            { r: RecordedRequest -> r.path?.contains("library=lib1") == true } to libraryItems("Arrival"),
+            { r: RecordedRequest -> r.path?.startsWith("/api/v1/catalogue/continue-watching") == true } to noneInProgress,
+            { r: RecordedRequest -> r.path?.startsWith("/api/v1/catalogue/up-next") == true } to upNext,
+            { r: RecordedRequest -> r.path == "/api/v1/catalogue/libraries" } to oneLibrary,
+            { r: RecordedRequest -> r.path?.startsWith("/api/v1/catalogue/libraries/lib1/items") == true }
+                to libraryItems("Arrival"),
         )
 
         val viewModel = HomeViewModel(repo())

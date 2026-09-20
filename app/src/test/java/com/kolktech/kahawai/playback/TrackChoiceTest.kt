@@ -1,6 +1,6 @@
 package com.kolktech.kahawai.playback
 
-import com.kolktech.kahawai.data.network.dto.AudioStreamInfo
+import com.kolktech.kahawai.data.network.dto.ClientAudioStream
 import com.kolktech.kahawai.data.network.dto.Pref
 import com.kolktech.kahawai.data.network.dto.SubtitleTrack
 import org.junit.Assert.assertEquals
@@ -23,15 +23,68 @@ class TrackChoiceTest {
         delivery = delivery,
     )
 
+    /// Exact track choices are scoped to the physical SOURCE, not the item
+    /// — `source:<collection_item_id>:<source_id>`, the same spelling the hub
+    /// migrated these rows to and the web client writes.
+    private val sourceScope = sourcePreferenceScope("copy1", 3)
+
     private fun resolve(prefs: List<Pref>, tracks: List<SubtitleTrack>, mediaType: String = "movie") =
-        resolveSubtitleTrack(prefs, seriesId = "show1", itemId = "ep1", mediaType = mediaType, tracks = tracks)
+        resolveSubtitleTrack(prefs, seriesId = "show1", sourceScope = sourceScope, mediaType = mediaType, tracks = tracks)
+
+    // sourcePreferenceScope
+
+    @Test
+    fun `the exact-choice scope names the copy and the source`() {
+        // `source:<collection_item_id>:<source_id>` — the spelling migration
+        // 0080 wrote and web/src/domain/source.ts builds. A numeric source id
+        // alone is not enough: they are reused after a deletion.
+        assertEquals("source:copy1:3", sourcePreferenceScope("copy1", 3))
+        assertNull(sourcePreferenceScope(null, 3))
+        assertNull(sourcePreferenceScope("copy1", null))
+        assertNull(sourcePreferenceScope("", 3))
+    }
+
+    @Test
+    fun `an exact pref under the old item scope is ignored`() {
+        // What the mediadb rewrite changed: these rows used to hang off the
+        // item id, and reading them there now silently resurrects a choice
+        // the hub has re-keyed.
+        val prefs = listOf(Pref("ep1", "subs.track", "7"))
+        val tracks = listOf(track(7, "en"), track(8, "nl"))
+        assertNull(resolve(prefs, tracks))
+    }
+
+    /// The player route encodes "no subtitle" as a sentinel and everything
+    /// else as the id itself. -1 cannot be that sentinel: the hub issues
+    /// negative ids for embedded tracks, so -1 and -2 are real picks and a
+    /// `>= 0` test threw every embedded selection away at the route
+    /// boundary. See Routes.NO_SUBTITLE_TRACK.
+    @Test
+    fun `negative track ids are real picks, not a no-subtitle sentinel`() {
+        val embedded = listOf(track(-1, "en"), track(-2, "en"), track(1, "fr"))
+        // Every id the hub can issue must survive a round trip that only
+        // treats the reserved sentinel as "none".
+        for (id in embedded.map { it.id }) {
+            assertEquals(id, id.takeIf { it != Long.MIN_VALUE })
+        }
+        assertNull(Long.MIN_VALUE.takeIf { it != Long.MIN_VALUE })
+    }
+
+    @Test
+    fun `a negative track id round-trips through the exact pref`() {
+        // The hub numbers embedded streams negatively; parsing must be signed.
+        val prefs = listOf(Pref("source:copy1:3", "subs.track", "-2"))
+        val tracks = listOf(track(-2, "en"), track(1, "nl"))
+        assertEquals(-2L, resolve(prefs, tracks)?.id)
+        assertEquals("-2", rememberedSubsTrackValue(track(-2, "en")))
+    }
 
     // resolveSubtitleTrack
 
     @Test
     fun `this item's exact track beats every wishlist`() {
         val prefs = listOf(
-            Pref("ep1", "subs.track", "7"),
+            Pref("source:copy1:3", "subs.track", "7"),
             Pref("show1", "subs", "nl"),
             Pref("", "subs.movie", "de"),
         )
@@ -43,14 +96,14 @@ class TrackChoiceTest {
     fun `an exact track this item doesn't have falls back to the wishlist`() {
         // Auto-advance carries the previous episode's track id; ids don't
         // survive the file boundary, the remembered language does.
-        val prefs = listOf(Pref("ep1", "subs.track", "999"), Pref("show1", "subs", "nl"))
+        val prefs = listOf(Pref("source:copy1:3", "subs.track", "999"), Pref("show1", "subs", "nl"))
         val tracks = listOf(track(1, "en"), track(2, "nl"))
         assertEquals(2L, resolve(prefs, tracks)?.id)
     }
 
     @Test
     fun `an exact track this client can't be served is ignored`() {
-        val prefs = listOf(Pref("ep1", "subs.track", "1"), Pref("show1", "subs", "en"))
+        val prefs = listOf(Pref("source:copy1:3", "subs.track", "1"), Pref("show1", "subs", "en"))
         val tracks = listOf(track(1, "en", delivery = "none"), track(2, "en"))
         assertEquals(2L, resolve(prefs, tracks)?.id)
     }
@@ -113,26 +166,26 @@ class TrackChoiceTest {
 
     // resolveAudioTrack
 
-    private fun stream(language: String?) = AudioStreamInfo(codec = "aac", channels = 2, language = language)
+    private fun stream(language: String?) = ClientAudioStream(codec = "aac", channels = 2, language = language)
 
     private fun audio(
         prefs: List<Pref>,
-        streams: List<AudioStreamInfo>,
+        streams: List<ClientAudioStream>,
         originalLanguage: String? = null,
         mediaType: String = "movie",
-    ) = resolveAudioTrack(prefs, "show1", "ep1", mediaType, originalLanguage, streams)
+    ) = resolveAudioTrack(prefs, "show1", sourceScope, mediaType, originalLanguage, streams)
 
     @Test
     fun `this item's pinned index beats every wishlist`() {
         // Two English tracks - feature and commentary - is the case no
         // language can express.
-        val prefs = listOf(Pref("ep1", "audio.track", "#1"), Pref("show1", "audio", "en"))
+        val prefs = listOf(Pref("source:copy1:3", "audio.track", "#1"), Pref("show1", "audio", "en"))
         assertEquals(1, audio(prefs, listOf(stream("en"), stream("en"))))
     }
 
     @Test
     fun `a pinned index the file doesn't have falls through`() {
-        val prefs = listOf(Pref("ep1", "audio.track", "#9"), Pref("show1", "audio", "ja"))
+        val prefs = listOf(Pref("source:copy1:3", "audio.track", "#9"), Pref("show1", "audio", "ja"))
         assertEquals(1, audio(prefs, listOf(stream("en"), stream("ja"))))
     }
 
@@ -179,7 +232,7 @@ class TrackChoiceTest {
     @Test
     fun `the media type is only worth looking up for an account list`() {
         assertEquals(false, needsMediaType(emptyList()))
-        assertEquals(false, needsMediaType(listOf(Pref("show1", "subs", "en"), Pref("ep1", "subs.track", "1"))))
+        assertEquals(false, needsMediaType(listOf(Pref("show1", "subs", "en"), Pref("source:copy1:3", "subs.track", "1"))))
         assertEquals(true, needsMediaType(listOf(Pref("", "subs.movie", "en"))))
         assertEquals(true, needsMediaType(listOf(Pref("", "audio.movie", "ja"))))
     }

@@ -45,7 +45,7 @@ fun LibraryScreen(
     libraryId: String,
     libraryName: String,
     repo: CatalogRepository,
-    onOpenItem: (itemId: String, libraryId: String?) -> Unit,
+    onOpenItem: (itemId: String, libraryId: String) -> Unit,
     onBack: () -> Unit,
     onSessionExpired: () -> Unit,
 ) {
@@ -106,7 +106,7 @@ fun LibraryScreen(
                         PosterCard(
                             item,
                             repo,
-                            { id -> onOpenItem(id, item.libraryId ?: libraryId) },
+                            { id -> onOpenItem(id, item.libraryId) },
                             focusRequester = if (index == 0) firstItemFocusRequester else null,
                         )
                     }

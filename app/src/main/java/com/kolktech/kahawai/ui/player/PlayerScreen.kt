@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.SystemClock
 import android.provider.Settings
 import android.util.Rational
+import android.util.TypedValue
 import android.view.GestureDetector
 import android.view.KeyEvent
 import android.view.LayoutInflater
@@ -88,6 +89,7 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.DefaultTimeBar
 import androidx.media3.ui.DefaultTrackNameProvider
 import androidx.media3.ui.PlayerView
+import androidx.media3.ui.SubtitleView
 import com.kolktech.kahawai.R
 import com.kolktech.kahawai.data.network.dto.SubtitleTrack
 import com.kolktech.kahawai.data.network.dto.displayLabel
@@ -132,7 +134,28 @@ private fun controlsInsetPx(context: Context): Float = maxOf(
 private fun applyCueBottomPadding(view: PlayerView, insetPx: Float) {
     val frameH = view.findViewById<View>(androidx.media3.ui.R.id.exo_content_frame).height.toFloat()
     if (frameH <= 0f || view.height <= 0) return
-    view.subtitleView?.setPadding(0, 0, 0, cueBottomPaddingPx(frameH, view.height.toFloat(), insetPx))
+    val subtitles = view.subtitleView ?: return
+    // Pin the glyph size in absolute pixels, derived from the UNPADDED
+    // height, before padding anything.
+    //
+    // SubtitleView is a FrameLayout that overrides neither setPadding nor
+    // onLayout, so padding it lays its CanvasSubtitleOutput child out that
+    // much shorter — and the child sizes text as a fraction of its OWN
+    // height, which is the already-shortened one. Raising the cues to clear
+    // the controls therefore shrank them too. Asking for
+    // TEXT_SIZE_TYPE_FRACTIONAL_IGNORE_PADDING does not help: the child's
+    // own padding is zero either way, and it is the parent's padding that
+    // took the height away.
+    //
+    // An absolute size is resolved as-is (SubtitleViewUtils.resolveTextSize),
+    // so it survives whatever the layout does to the box, leaving the
+    // padding to do only what it is for: move them.
+    val unpaddedH = subtitles.height.takeIf { it > 0 } ?: view.height
+    subtitles.setFixedTextSize(
+        TypedValue.COMPLEX_UNIT_PX,
+        SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * unpaddedH,
+    )
+    subtitles.setPadding(0, 0, 0, cueBottomPaddingPx(frameH, view.height.toFloat(), insetPx))
 }
 
 /// The arithmetic behind [applyCueBottomPadding], in the frame's own terms:
@@ -185,7 +208,7 @@ fun PlayerScreen(
     onPreviousEpisode: (itemId: String, subtitleTrackId: Long?) -> Unit = { _, _ -> },
     initialAudioTrack: Int = -1,
     initialSubtitleTrackId: Long? = null,
-    libraryId: String? = null,
+    libraryId: String,
     prefetch: PlaybackPrefetch? = null,
 ) {
     val context = LocalContext.current
@@ -729,7 +752,44 @@ private fun PlayerContent(
     // of TrackSelectionDialogBuilder's modal AlertDialog. Reached through
     // the settings gear menu — portrait screens don't have bottom-bar
     // width for a dedicated audio button.
+    /// A remux/transcode session only ever exposes the single audio stream
+    /// the hub muxed, so ExoPlayer's own track list has nothing to offer.
+    /// The hub's per-source list is what the viewer actually has to choose
+    /// from there, and picking one restarts the pipeline
+    /// (PlayerViewModel.selectAudioTrackIndex).
+    fun showHubAudioTrackMenu(menuContext: Context, anchor: View) {
+        val streams = viewModel.negotiatedAudio()
+        if (streams.size < 2) return
+        PopupMenu(menuContext, anchor).apply {
+            streams.forEachIndexed { index, stream ->
+                val channels = when (stream.channels) {
+                    1 -> menuContext.getString(R.string.channels_mono)
+                    2 -> menuContext.getString(R.string.channels_stereo)
+                    6 -> "5.1"
+                    8 -> "7.1"
+                    else -> null
+                }
+                val label = listOfNotNull(
+                    stream.language?.uppercase(),
+                    stream.codec.uppercase(),
+                    channels,
+                ).joinToString(" · ")
+                menu.add(0, index, index, label)
+            }
+            menu.setGroupCheckable(0, true, true)
+            menu.findItem(viewModel.currentAudioTrack)?.isChecked = true
+            setOnMenuItemClickListener { item ->
+                viewModel.selectAudioTrackIndex(item.itemId)
+                true
+            }
+        }.show()
+    }
+
     fun showAudioTrackMenu(menuContext: Context, anchor: View) {
+        if (!viewModel.isDirect) {
+            showHubAudioTrackMenu(menuContext, anchor)
+            return
+        }
         val groups = viewModel.player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
         if (groups.isEmpty()) return
         val nameProvider = DefaultTrackNameProvider(menuContext.resources)
@@ -851,12 +911,21 @@ private fun PlayerContent(
         PopupMenu(menuContext, anchor).apply {
             menu.add(0, 0, 0, menuContext.getString(R.string.player_settings_video, menuContext.getString(RESIZE_MODES[resizeModeIndex].second)))
             menu.add(0, 1, 1, menuContext.getString(R.string.player_settings_speed, "${speed}x"))
-            if (audioGroups.isNotEmpty()) {
+            val hubAudio = viewModel.negotiatedAudio()
+            val hasAudioChoice =
+                if (viewModel.isDirect) audioGroups.isNotEmpty() else hubAudio.size >= 2
+            val audioLabel = if (viewModel.isDirect) {
+                currentAudio
+            } else {
+                hubAudio.getOrNull(viewModel.currentAudioTrack)
+                    ?.let { listOfNotNull(it.language?.uppercase(), it.codec.uppercase()).joinToString(" · ") }
+            }
+            if (hasAudioChoice) {
                 menu.add(
                     0,
                     2,
                     2,
-                    menuContext.getString(R.string.player_settings_audio, currentAudio ?: menuContext.getString(R.string.default_label)),
+                    menuContext.getString(R.string.player_settings_audio, audioLabel ?: menuContext.getString(R.string.default_label)),
                 )
             }
             setOnMenuItemClickListener { item ->
@@ -1178,7 +1247,6 @@ private fun PlayerContent(
                 "overlay" -> if (!isNativeBitmapPick(selectedSubtitle, isDirect = !activeSession.isHls)) {
                     ImageSubtitleOverlay(
                         player = viewModel.player,
-                        itemId = viewModel.itemId,
                         track = selectedSubtitle!!,
                         subtitleSession = activeSession,
                         resizeMode = RESIZE_MODES[resizeModeIndex].first,

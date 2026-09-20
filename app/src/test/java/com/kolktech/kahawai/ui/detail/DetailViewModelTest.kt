@@ -67,13 +67,44 @@ class DetailViewModelTest {
         application,
         repo(),
         itemId,
-        libraryId = null,
+        libraryId = "lib1",
         prefsRepo = PreferencesRepository({ error("no preference server in this test") }),
     )
 
+    // ---- fixtures ----
+    //
+    // The hub's catalogue shapes carry required fields these tests don't
+    // care about (a resolved description, the copies behind the identity),
+    // so they are built here rather than spelled out at every enqueue.
+
+    private fun itemJson(
+        id: String,
+        title: String,
+        kind: String = "movie",
+        extra: String = "",
+    ) = """
+        {
+          "id":"$id","kind":"$kind","media_type":"movies","title":"$title",
+          "representative_id":"c1:1","copy_ids":["c1:1"],
+          "metadata":{"description":{},"provenance":{}},
+          "sources":[],"chapters":[],"copies":[],"segments":[]${if (extra.isEmpty()) "" else ",$extra"}
+        }
+    """.trimIndent()
+
+    private fun childrenJson(vararg children: Pair<String, String>) = """
+        {
+          "children":[${children.mapIndexed { i, (id, title) ->
+        """{"id":"$id","parent_id":"show1","representative_id":"c1:${i + 1}","title":"$title",""" +
+            """"position":{"kind":"episode","season":1,"episode":${i + 1}},"source_count":1,""" +
+            """"metadata":{"description":{},"provenance":{}}}"""
+    }.joinToString(",")}],
+          "groups":[],"total":${children.size},"limit":50,"offset":0,"watch":{}
+        }
+    """.trimIndent()
+
     @Test
     fun `load succeeds for a leaf item with no children`() = runTest {
-        server.enqueue(MockResponse().setBody("""{"id":"item1","kind":"movie","title":"Arrival"}"""))
+        server.enqueue(MockResponse().setBody(itemJson("item1", "Arrival")))
 
         val viewModel = vm()
 
@@ -89,10 +120,10 @@ class DetailViewModelTest {
 
     @Test
     fun `load succeeds for a show and fetches children`() = runTest {
-        server.enqueue(MockResponse().setBody("""{"id":"show1","kind":"show","title":"A Show"}"""))
+        server.enqueue(MockResponse().setBody(itemJson("show1", "A Show", kind = "series")))
         server.enqueue(
             MockResponse().setBody(
-                """{"children":[{"id":"ep1","kind":"episode","title":"Pilot"},{"id":"ep2","kind":"episode","title":"Two"}]}""",
+                childrenJson("ep1" to "Pilot", "ep2" to "Two"),
             ),
         )
 
@@ -111,14 +142,13 @@ class DetailViewModelTest {
     fun `load populates subtitleTracks from negotiated subtitles`() = runTest {
         server.enqueue(
             MockResponse().setBody(
-                """
-                {
-                  "id":"item1","kind":"movie","title":"Arrival",
-                  "negotiated":{"mode":"direct","cost":"free","subtitles":[
-                    {"id":1,"item_id":"item1","origin":"embedded","format":"srt","delivery":"text"}
-                  ]}
-                }
-                """.trimIndent(),
+                itemJson(
+                    "item1",
+                    "Arrival",
+                    extra = """"negotiated":{"mode":"direct","cost":"free","target_duration_secs":6,""" +
+                        """"subtitles":[{"id":1,"item_id":"item1","origin":"embedded","format":"srt",""" +
+                        """"delivery":"text","note":"","deletable":false,"machine":false}]}""",
+                ),
             ),
         )
 
@@ -163,10 +193,10 @@ class DetailViewModelTest {
 
     @Test
     fun `refresh updates detail and children while preserving track selections`() = runTest {
-        server.enqueue(MockResponse().setBody("""{"id":"show1","kind":"show","title":"A Show"}"""))
+        server.enqueue(MockResponse().setBody(itemJson("show1", "A Show", kind = "series")))
         server.enqueue(
             MockResponse().setBody(
-                """{"children":[{"id":"ep1","kind":"episode","title":"Pilot"}]}""",
+                childrenJson("ep1" to "Pilot"),
             ),
         )
         val viewModel = vm("show1")
@@ -180,10 +210,10 @@ class DetailViewModelTest {
             val afterAudioSelect = awaitItem() as DetailState.Loaded
             assertEquals(2, afterAudioSelect.selectedAudioTrackIndex)
 
-            server.enqueue(MockResponse().setBody("""{"id":"show1","kind":"show","title":"A Show Renamed"}"""))
+            server.enqueue(MockResponse().setBody(itemJson("show1", "A Show Renamed", kind = "series")))
             server.enqueue(
                 MockResponse().setBody(
-                    """{"children":[{"id":"ep1","kind":"episode","title":"Pilot"},{"id":"ep2","kind":"episode","title":"Two"}]}""",
+                    childrenJson("ep1" to "Pilot", "ep2" to "Two"),
                 ),
             )
             viewModel.refresh()
@@ -197,7 +227,7 @@ class DetailViewModelTest {
 
     @Test
     fun `refresh is a no-op before the initial load reaches Loaded`() = runTest {
-        server.enqueue(MockResponse().setBody("""{"id":"item1","kind":"movie","title":"Arrival"}"""))
+        server.enqueue(MockResponse().setBody(itemJson("item1", "Arrival")))
         val viewModel = vm()
 
         assertTrue(viewModel.state.value is DetailState.Loading)
@@ -214,7 +244,7 @@ class DetailViewModelTest {
 
     @Test
     fun `refresh failure leaves previously loaded content untouched`() = runTest {
-        server.enqueue(MockResponse().setBody("""{"id":"item1","kind":"movie","title":"Arrival"}"""))
+        server.enqueue(MockResponse().setBody(itemJson("item1", "Arrival")))
         val viewModel = vm()
 
         viewModel.state.test {
@@ -232,7 +262,7 @@ class DetailViewModelTest {
 
     @Test
     fun `selectSubtitleTrack updates state only when already Loaded`() = runTest {
-        server.enqueue(MockResponse().setBody("""{"id":"item1","kind":"movie","title":"Arrival"}"""))
+        server.enqueue(MockResponse().setBody(itemJson("item1", "Arrival")))
         val viewModel = vm()
         val track = SubtitleTrack(id = 1, itemId = "item1", origin = "embedded", format = "srt", delivery = "text")
 
@@ -255,7 +285,7 @@ class DetailViewModelTest {
     fun `toggleWatched marks the item and clears its resume position`() = runTest {
         server.enqueue(
             MockResponse().setBody(
-                """{"id":"item1","kind":"movie","title":"Arrival","played":false,"resume_position_ms":120000}""",
+                itemJson("item1", "Arrival", extra = """"played":false,"resume_position_ms":120000"""),
             ),
         )
         val viewModel = vm()
@@ -268,7 +298,7 @@ class DetailViewModelTest {
 
             server.enqueue(
                 MockResponse().setBody(
-                    """{"updated":[{"item_id":"item1","position_ms":0,"played":true,"play_count":1}]}""",
+                    """{"updated":[{"item_id":"item1","position_ms":0,"played":true}]}""",
                 ),
             )
             viewModel.toggleWatched()
@@ -279,14 +309,13 @@ class DetailViewModelTest {
             val done = awaitItem() as DetailState.Loaded
             assertFalse(done.watchedActionInFlight)
             assertTrue(done.detail.played)
-            assertEquals(1, done.detail.playCount)
             assertEquals(0L, done.detail.resumePositionMs)
         }
     }
 
     @Test
     fun `toggleWatched failure clears in-flight and surfaces a transient error`() = runTest {
-        server.enqueue(MockResponse().setBody("""{"id":"item1","kind":"movie","title":"Arrival"}"""))
+        server.enqueue(MockResponse().setBody(itemJson("item1", "Arrival")))
         val viewModel = vm()
 
         viewModel.state.test {
@@ -309,7 +338,7 @@ class DetailViewModelTest {
 
     @Test
     fun `toggleWatched ignores a second call while one is in flight`() = runTest {
-        server.enqueue(MockResponse().setBody("""{"id":"item1","kind":"movie","title":"Arrival"}"""))
+        server.enqueue(MockResponse().setBody(itemJson("item1", "Arrival")))
         val viewModel = vm()
 
         viewModel.state.test {
@@ -319,7 +348,7 @@ class DetailViewModelTest {
 
             server.enqueue(
                 MockResponse().setBody(
-                    """{"updated":[{"item_id":"item1","position_ms":0,"played":true,"play_count":1}]}""",
+                    """{"updated":[{"item_id":"item1","position_ms":0,"played":true}]}""",
                 ),
             )
             viewModel.toggleWatched()
@@ -336,7 +365,7 @@ class DetailViewModelTest {
 
     @Test
     fun `selectAudioTrackIndex updates state only when already Loaded`() = runTest {
-        server.enqueue(MockResponse().setBody("""{"id":"item1","kind":"movie","title":"Arrival"}"""))
+        server.enqueue(MockResponse().setBody(itemJson("item1", "Arrival")))
         val viewModel = vm()
 
         viewModel.selectAudioTrackIndex(3)

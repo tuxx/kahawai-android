@@ -49,3 +49,11 @@ private fun Throwable.readablePlaybackMessage(): String {
 /// amount of retrying this request will help. The UI's only real recovery
 /// is sending the user back to the login screen.
 fun Throwable.isAuthError(): Boolean = this is HttpException && code() == 401
+
+/// The hub no longer has the playback session this request names — it was
+/// reaped, or is already tearing down (`session_gone`, and `begin_report`
+/// refusing a session whose teardown has begun). Distinct from a transient
+/// failure because retrying the SAME session can never succeed: nothing but
+/// a new session will do.
+fun Throwable.isSessionGone(): Boolean =
+    this is HttpException && (code() == 404 || code() == 410)

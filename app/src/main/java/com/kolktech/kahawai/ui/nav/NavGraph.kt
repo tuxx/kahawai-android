@@ -63,6 +63,13 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
 }
 
 private object Routes {
+    /// "No subtitle" on the player route. NOT -1: the hub numbers embedded
+    /// subtitle tracks NEGATIVELY (a listing reads e.g. [1, 2, -1, -2]), so
+    /// -1 is a real track id and the old sentinel silently swallowed every
+    /// embedded pick on its way into the player. Long.MIN_VALUE cannot
+    /// collide with an id the hub issues.
+    const val NO_SUBTITLE_TRACK = Long.MIN_VALUE
+
     const val SETUP = "setup"
     const val LOGIN = "login"
     const val HOME = "home"
@@ -83,12 +90,12 @@ private object Routes {
         "player/{itemId}?startMs={startMs}&audioTrack={audioTrack}&subtitleTrack={subtitleTrack}" +
             "&library={library}&prefetch={prefetch}"
     fun library(libraryId: String, name: String) = "library/$libraryId?name=${Uri.encode(name)}"
-    /// [libraryId] is navigation context, carried the way the web client
-    /// carries it in the URL: an item's own detail response doesn't name a
-    /// library, and its media type is what the account's track preferences
-    /// are keyed by (see TrackChoice). Empty when the row it was opened
-    /// from didn't name one either.
-    fun detail(itemId: String, libraryId: String?) = "detail/$itemId?library=${libraryId.orEmpty()}"
+    /// [libraryId] is carried the way the web client carries it in the
+    /// URL, and is required rather than optional: every catalogue route is
+    /// library-scoped now, so an item id on its own names nothing the hub
+    /// can serve. It is also the only route to the media type the
+    /// account's track preferences are keyed by (see TrackChoice).
+    fun detail(itemId: String, libraryId: String) = "detail/$itemId?library=$libraryId"
     /// [prefetch] rides along only from a Detail-screen Play press, which
     /// already ran the QUERY this saves the player from repeating (see
     /// PlaybackPrefetch) — null for auto-advance/"<"/">, which have no
@@ -96,9 +103,9 @@ private object Routes {
     /// Kept last in the query string and JSON-then-percent-encoded as a
     /// whole so its own `&`/`=` characters can never be mistaken for a
     /// route delimiter.
-    fun player(itemId: String, startMs: Long, audioTrack: Int, subtitleTrackId: Long?, libraryId: String?, prefetch: PlaybackPrefetch? = null) =
-        "player/$itemId?startMs=$startMs&audioTrack=$audioTrack&subtitleTrack=${subtitleTrackId ?: -1}" +
-            "&library=${libraryId.orEmpty()}" +
+    fun player(itemId: String, startMs: Long, audioTrack: Int, subtitleTrackId: Long?, libraryId: String, prefetch: PlaybackPrefetch? = null) =
+        "player/$itemId?startMs=$startMs&audioTrack=$audioTrack&subtitleTrack=${subtitleTrackId ?: NO_SUBTITLE_TRACK}" +
+            "&library=$libraryId" +
             "&prefetch=${prefetch?.let { Uri.encode(apiJson.encodeToString(PlaybackPrefetch.serializer(), it)) }.orEmpty()}"
 }
 
@@ -353,7 +360,8 @@ fun KahawaiNavGraph(app: KahawaiApp, modifier: Modifier = Modifier) {
             ),
         ) { backStackEntry ->
             val itemId = backStackEntry.arguments?.getString("itemId") ?: return@composable
-            val libraryId = backStackEntry.arguments?.getString("library")?.takeIf { it.isNotEmpty() }
+            val libraryId = backStackEntry.arguments?.getString("library")
+                ?.takeIf { it.isNotEmpty() } ?: return@composable
             DetailScreen(
                 itemId = itemId,
                 libraryId = libraryId,
@@ -372,7 +380,10 @@ fun KahawaiNavGraph(app: KahawaiApp, modifier: Modifier = Modifier) {
                 navArgument("itemId") { type = NavType.StringType },
                 navArgument("startMs") { type = NavType.LongType; defaultValue = 0L },
                 navArgument("audioTrack") { type = NavType.IntType; defaultValue = -1 },
-                navArgument("subtitleTrack") { type = NavType.LongType; defaultValue = -1L },
+                navArgument("subtitleTrack") {
+                    type = NavType.LongType
+                    defaultValue = Routes.NO_SUBTITLE_TRACK
+                },
                 navArgument("library") { type = NavType.StringType; defaultValue = "" },
                 navArgument("prefetch") { type = NavType.StringType; defaultValue = "" },
             ),
@@ -380,10 +391,12 @@ fun KahawaiNavGraph(app: KahawaiApp, modifier: Modifier = Modifier) {
             val itemId = backStackEntry.arguments?.getString("itemId") ?: return@composable
             val startMs = backStackEntry.arguments?.getLong("startMs") ?: 0L
             val audioTrack = backStackEntry.arguments?.getInt("audioTrack") ?: -1
-            val subtitleTrack = backStackEntry.arguments?.getLong("subtitleTrack") ?: -1L
+            val subtitleTrack =
+                backStackEntry.arguments?.getLong("subtitleTrack") ?: Routes.NO_SUBTITLE_TRACK
             // An episode is in the same library as the one that opened it,
             // so this rides the whole way through a binge (see Routes.detail).
-            val libraryId = backStackEntry.arguments?.getString("library")?.takeIf { it.isNotEmpty() }
+            val libraryId = backStackEntry.arguments?.getString("library")
+                ?.takeIf { it.isNotEmpty() } ?: return@composable
             // Absent for auto-advance/"<"/">" (see Routes.player) — falls
             // back to null, which PlayerViewModel already treats as "query
             // it myself".
@@ -395,7 +408,9 @@ fun KahawaiNavGraph(app: KahawaiApp, modifier: Modifier = Modifier) {
                 startMs = startMs,
                 appSettingsStore = app.appSettingsStore,
                 initialAudioTrack = audioTrack,
-                initialSubtitleTrackId = subtitleTrack.takeIf { it >= 0 },
+                // Only the sentinel means "none" — a negative id is a real
+                // embedded track (see Routes.NO_SUBTITLE_TRACK).
+                initialSubtitleTrackId = subtitleTrack.takeIf { it != Routes.NO_SUBTITLE_TRACK },
                 libraryId = libraryId,
                 prefetch = prefetch,
                 onClose = { navController.popBackStack() },

@@ -68,8 +68,30 @@ class SearchViewModelTest {
 
     private fun newViewModel(): SearchViewModel = SearchViewModel(repo()).also { viewModel = it }
 
+    /// Search has no cross-library route on the hub, so it lists the
+    /// libraries and asks each one. That makes response order a race, so
+    /// these route by path instead of enqueuing a FIFO queue.
     private fun itemsBody(title: String) =
-        """{"items":[{"id":"i1","kind":"movie","title":"$title"}],"total":1,"limit":60,"offset":0}"""
+        """{"items":[{"id":"i1","kind":"movie","media_type":"movies","title":"$title","representative_id":"c1:1","copy_ids":["c1:1"],"metadata":{"description":{},"provenance":{}},"played":false}],"total":1,"limit":60,"offset":0}"""
+
+    private val oneLibrary =
+        """[{"id":"lib1","name":"Movies","media_type":"movies"}]"""
+
+    private fun searchDispatcher(vararg itemPages: String) {
+        val pages = itemPages.toMutableList()
+        server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+            override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): MockResponse = when {
+                request.path == "/api/v1/catalogue/libraries" -> MockResponse().setBody(oneLibrary)
+                request.path?.startsWith("/api/v1/catalogue/libraries/lib1/items") == true ->
+                    if (pages.isEmpty()) {
+                        MockResponse().setResponseCode(500).setBody("boom")
+                    } else {
+                        MockResponse().setBody(pages.removeAt(0))
+                    }
+                else -> MockResponse().setResponseCode(404)
+            }
+        }
+    }
 
     @Test
     fun `retry with a blank query resets to idle without a network call`() = runTest {
@@ -86,7 +108,7 @@ class SearchViewModelTest {
 
     @Test
     fun `a query change searches and reports results`() = runTest {
-        server.enqueue(MockResponse().setBody(itemsBody("Arrival")))
+        searchDispatcher(itemsBody("Arrival"))
         val vm = newViewModel()
 
         vm.state.test {
@@ -101,7 +123,16 @@ class SearchViewModelTest {
 
     @Test
     fun `a query change failing with 401 reports auth error`() = runTest {
-        server.enqueue(MockResponse().setResponseCode(401))
+        // An auth failure must survive the per-library fan-out rather than
+        // being swallowed into an empty result set.
+        server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+            override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest) =
+                if (request.path == "/api/v1/catalogue/libraries") {
+                    MockResponse().setBody(oneLibrary)
+                } else {
+                    MockResponse().setResponseCode(401)
+                }
+        }
         val vm = newViewModel()
 
         vm.state.test {
@@ -116,7 +147,7 @@ class SearchViewModelTest {
 
     @Test
     fun `retry after a failure re-issues the same query`() = runTest {
-        server.enqueue(MockResponse().setResponseCode(500))
+        searchDispatcher()
         val vm = newViewModel()
 
         vm.state.test {
@@ -125,7 +156,7 @@ class SearchViewModelTest {
             assertEquals(SearchState.Loading, awaitItem())
             awaitItem() as SearchState.Error
 
-            server.enqueue(MockResponse().setBody(itemsBody("Arrival")))
+            searchDispatcher(itemsBody("Arrival"))
             vm.retry()
 
             assertEquals(SearchState.Loading, awaitItem())
@@ -136,7 +167,7 @@ class SearchViewModelTest {
 
     @Test
     fun `refresh re-runs the current query while results are already loaded`() = runTest {
-        server.enqueue(MockResponse().setBody(itemsBody("Arrival")))
+        searchDispatcher(itemsBody("Arrival"))
         val vm = newViewModel()
 
         vm.state.test {
@@ -145,7 +176,7 @@ class SearchViewModelTest {
             assertEquals(SearchState.Loading, awaitItem())
             awaitItem() as SearchState.Loaded
 
-            server.enqueue(MockResponse().setBody(itemsBody("Arrival 2")))
+            searchDispatcher(itemsBody("Arrival 2"))
             vm.refresh()
 
             val refreshed = awaitItem() as SearchState.Loaded

@@ -9,9 +9,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import com.kolktech.kahawai.R
-import com.kolktech.kahawai.data.network.dto.AdminLibrary
+import com.kolktech.kahawai.data.network.dto.CatalogueCollection
 import com.kolktech.kahawai.data.network.dto.AdminSession
-import com.kolktech.kahawai.data.network.dto.CollectionInfo
+import com.kolktech.kahawai.data.network.dto.LibrarySummary
 import com.kolktech.kahawai.data.network.dto.EnrichStatusResponse
 import com.kolktech.kahawai.data.network.dto.PendingEnrollment
 import com.kolktech.kahawai.data.network.dto.ProvidersResponse
@@ -24,8 +24,8 @@ data class AdminData(
     val pending: List<PendingEnrollment>,
     val satellites: List<Satellite>,
     val sessions: List<AdminSession>,
-    val libraries: List<AdminLibrary>,
-    val collections: List<CollectionInfo>,
+    val libraries: List<LibrarySummary>,
+    val collections: List<CatalogueCollection>,
     val providers: ProvidersResponse,
     val enrich: EnrichStatusResponse,
 )
@@ -90,19 +90,21 @@ class AdminViewModel(
 
     fun deleteLibrary(id: String) = runAction { repo.deleteLibrary(id) }
 
-    fun attachCollection(libraryId: String, moduleId: String, collectionId: String) = runAction {
-        repo.attachCollection(libraryId, moduleId, collectionId)
-    }
-
-    fun detachCollection(libraryId: String, moduleId: String, collectionId: String) = runAction {
-        repo.detachCollection(libraryId, moduleId, collectionId)
+    /// Membership is set wholesale (see [AdminRepository.setCollections]);
+    /// the screen computes the list it wants from the one it is showing.
+    fun setCollections(libraryId: String, collectionIds: List<String>) = runAction {
+        repo.setCollections(libraryId, collectionIds)
     }
 
     fun refreshLibrary(id: String) = runAction {
         val r = repo.refreshLibrary(id)
         notice(
             string(R.string.admin_notice_refresh, r.asked) +
-                if (r.offline > 0) string(R.string.admin_notice_refresh_offline_suffix, r.offline) else "",
+                if (r.offline + r.unsupported > 0) {
+                    string(R.string.admin_notice_refresh_offline_suffix, r.offline + r.unsupported)
+                } else {
+                    ""
+                },
         )
     }
 

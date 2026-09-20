@@ -148,7 +148,6 @@ internal fun shiftBottomOverflowIntoView(dsts: List<RectF>, containerH: Float, b
 @Composable
 fun ImageSubtitleOverlay(
     player: Player,
-    itemId: String,
     track: SubtitleTrack,
     subtitleSession: SubtitleSession,
     resizeMode: Int,
@@ -185,7 +184,8 @@ fun ImageSubtitleOverlay(
         // out of.
         val (url, maxAttempts) = when {
             track.origin == "raster" ->
-                "${ApiClient.baseUrl().trimEnd('/')}/api/v1/items/$itemId/subtitles/${track.id}.jsonl" to 1
+                "${ApiClient.baseUrl().trimEnd('/')}/api/v1/playback/sessions/" +
+                    "${subtitleSession.sessionId}/subtitles/${track.id}.jsonl" to 1
             subtitleSession.isHls && track.origin == "embedded" ->
                 "${subtitleSession.streamBaseUrl}subs-${track.id}.jsonl" to 3
             else -> {

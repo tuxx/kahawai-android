@@ -122,7 +122,7 @@ fun AssSubtitleOverlay(
             coroutineScope {
                 launch {
                     try {
-                        val fonts = repo.fonts(itemId).fonts
+                        val fonts = repo.fonts(subtitleSession.sessionId).fonts
                         // Fetched concurrently, not one at a time: a
                         // styled ASS track (karaoke/anime content
                         // especially) can embed a dozen+ fonts, and
@@ -130,7 +130,10 @@ fun AssSubtitleOverlay(
                         // both wait on this finishing.
                         val loaded = fonts.mapIndexed { index, name ->
                             async(Dispatchers.IO) {
-                                name to fetchBytes("${ApiClient.baseUrl().trimEnd('/')}/api/v1/items/$itemId/fonts/$index")
+                                name to fetchBytes(
+                                    "${ApiClient.baseUrl().trimEnd('/')}/api/v1/playback/sessions/" +
+                                        "${subtitleSession.sessionId}/fonts/$index",
+                                )
                             }
                         }.awaitAll()
                         loaded.forEach { (name, bytes) ->
@@ -243,7 +246,7 @@ fun AssSubtitleOverlay(
                         // pipeline key for origin=="embedded" tracks.
                         // Mirrors web/src/views/Player.tsx's `isHls &&
                         // selected.origin === 'embedded'` gate — falling
-                        // straight through to the item-scoped endpoint
+                        // straight through to the whole-file endpoint
                         // otherwise, same as the web client's fallback.
                         val fedFromSession = subtitleSession.isHls &&
                             track.origin == "embedded" &&
@@ -254,7 +257,8 @@ fun AssSubtitleOverlay(
                             // single attempt is enough (same as the web
                             // client's fallback `feed()` call).
                             feedFrom(
-                                url = "${ApiClient.baseUrl().trimEnd('/')}/api/v1/items/$itemId/subtitles/${track.id}.ass",
+                                url = "${ApiClient.baseUrl().trimEnd('/')}/api/v1/playback/sessions/" +
+                                    "${subtitleSession.sessionId}/subtitles/${track.id}.ass",
                                 maxAttempts = 1,
                             )
                         }

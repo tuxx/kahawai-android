@@ -12,7 +12,7 @@ import org.junit.Test
 
 class PlayerViewModelLogicTest {
 
-    private fun episode(id: String) = Item(id = id, kind = "episode", title = id)
+    private fun episode(id: String) = Item(id = id, kind = "episode", title = id, libraryId = "lib1")
 
     private fun subtitle(
         id: Long,
@@ -270,14 +270,14 @@ class PlayerViewModelLogicTest {
 
     @Test
     fun `builds a vtt url with the shift negated from offset`() {
-        val url = subtitleVttUrl(baseUrl = "https://hub.local", itemId = "item1", trackId = 42, offsetMs = 5_000)
-        assertEquals("https://hub.local/api/v1/items/item1/subtitles/42.vtt?shift_ms=-5000", url)
+        val url = subtitleVttUrl(baseUrl = "https://hub.local", sessionId = "s1", trackId = 42, offsetMs = 5_000)
+        assertEquals("https://hub.local/api/v1/playback/sessions/s1/subtitles/42.vtt?shift_ms=-5000", url)
     }
 
     @Test
     fun `trims a trailing slash off the base url`() {
-        val url = subtitleVttUrl(baseUrl = "https://hub.local/", itemId = "item1", trackId = 42, offsetMs = 0)
-        assertEquals("https://hub.local/api/v1/items/item1/subtitles/42.vtt?shift_ms=0", url)
+        val url = subtitleVttUrl(baseUrl = "https://hub.local/", sessionId = "s1", trackId = 42, offsetMs = 0)
+        assertEquals("https://hub.local/api/v1/playback/sessions/s1/subtitles/42.vtt?shift_ms=0", url)
     }
 
     // skippableSegment / skipLabelRes / skipTargetMs
