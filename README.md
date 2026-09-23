@@ -63,7 +63,9 @@ entry, D-pad friendly UI).
   Compose-canvas overlay (`ImageSubtitleOverlay.kt`) that composites
   display sets the hub decodes and streams over a tap. Server-side
   burn-in is now only a hub-chosen fallback for tracks it can't deliver
-  either way.
+  either way. The CC control follows the hub subtitle list and selected track,
+  including ASS/image overlays; direct-play embedded bitmap tracks still use
+  Media3's native track selection.
 - **Admin & settings**: hub administration and app settings screens
   (`ui/admin/`, `ui/settings/`), reachable from the navigation drawer.
 

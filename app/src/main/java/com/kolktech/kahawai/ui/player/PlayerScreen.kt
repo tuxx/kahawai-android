@@ -437,6 +437,7 @@ private fun PlayerContent(
     val scope = rememberCoroutineScope()
     val title by viewModel.title.collectAsState()
     val selectedSubtitle by viewModel.selectedSubtitleTrack.collectAsState()
+    val subtitleTracks by viewModel.subtitleTracks.collectAsState()
     val subtitleSession by viewModel.subtitleSession.collectAsState()
     val transientError by viewModel.transientError.collectAsState()
     val hdrActive by viewModel.hdrActive.collectAsState()
@@ -1199,7 +1200,7 @@ private fun PlayerContent(
                     findViewById<ImageButton>(androidx.media3.ui.R.id.exo_settings).setOnClickListener { anchor ->
                         showSettingsMenu(ctx, anchor)
                     }
-                    findViewById<ImageButton>(androidx.media3.ui.R.id.exo_subtitle).setOnClickListener { anchor ->
+                    findViewById<ImageButton>(R.id.kw_subtitle).setOnClickListener { anchor ->
                         showSubtitleTrackMenu(ctx, anchor)
                     }
                     // Hooked on the content frame's layout, since both
@@ -1215,6 +1216,22 @@ private fun PlayerContent(
                 }
             },
         )
+
+        // Media3 updateTrackLists enables exo_subtitle only for native text
+        // tracks. Our ASS/image overlays are outside that list, so this button
+        // has its own ID and follows the same hub tracks as its menu. Direct
+        // bitmap picks still use applySubtitleTrackSelectionOverride.
+        // https://github.com/androidx/media/blob/1.11.0/libraries/ui/src/main/java/androidx/media3/ui/PlayerControlView.java#L1363
+        LaunchedEffect(subtitleTracks, selectedSubtitle, playerView) {
+            playerView?.findViewById<ImageButton>(R.id.kw_subtitle)?.apply {
+                isEnabled = selectedSubtitle != null || subtitleTracks.any { it.delivery != "none" }
+                alpha = if (isEnabled) 1f else 0.3f
+                setImageResource(
+                    if (selectedSubtitle != null) androidx.media3.ui.R.drawable.exo_styled_controls_subtitle_on
+                    else androidx.media3.ui.R.drawable.exo_styled_controls_subtitle_off,
+                )
+            }
+        }
 
         // Nothing relayouts when the controls fade in or out, so the text
         // renderer's padding is re-applied here; the overlays take the same
