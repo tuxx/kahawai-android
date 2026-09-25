@@ -118,7 +118,9 @@
       <ImageButton android:id="@id/exo_repeat_toggle"
           style="@style/ExoStyledControls.Button.Bottom.RepeatToggle"/>
 
-      <ImageButton android:id="@id/exo_subtitle"
+      <ImageButton android:id="@+id/kw_subtitle"
+          android:contentDescription="@string/subtitles"
+          android:enabled="false"
           style="@style/ExoStyledControls.Button.Bottom.CC"/>
 
       <ImageButton android:id="@id/exo_settings"
