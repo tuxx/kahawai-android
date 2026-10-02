@@ -8,6 +8,7 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.util.Base64
 import android.util.Log
+import android.os.SystemClock
 import androidx.annotation.OptIn
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxSize
@@ -25,6 +26,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
+import com.kolktech.kahawai.BuildConfig
 import com.kolktech.kahawai.data.network.ApiClient
 import com.kolktech.kahawai.data.network.dto.SubtitleTrack
 import com.kolktech.kahawai.ui.player.SubtitleSession
@@ -39,23 +41,6 @@ import okhttp3.Request
 import java.util.concurrent.TimeUnit
 
 private const val TAG = "ImageSubtitleOverlay"
-
-/// The redraw loop below always prefers the newest set whose startMs has
-/// passed (`lastOrNull { it.startMs <= t }`). A small trailing window here
-/// used to assume the tap arrives roughly paced with playback (a handful
-/// of sets ahead at most) — wrong: the hub's remux pipeline decodes the
-/// whole PGS track's display sets as fast as it can, independent of
-/// playback position, and streams a session's entire backlog in one burst
-/// on connect. With a window sized for "a few sets ahead", that burst
-/// evicted every set near the actual (still-near-zero) playback position
-/// before the redraw loop ever got to look at them — subtitles either
-/// never appeared or only flashed briefly if a live one barely survived
-/// the eviction race. The window has to be sized to hold a whole session's
-/// worth of cues instead, not just the redraw poll's lookahead — bounded
-/// only as a backstop against a runaway/corrupt stream, comfortably above
-/// even a dense feature-length track's cue count (each cue is a start +
-/// a later empty clear, so ~2 entries per line of dialogue).
-private const val MAX_BUFFERED_SETS = 4096
 
 /// One line of the session's `subs-{id}.jsonl` tap for an IMAGE
 /// (PGS/VobSub) track — a decoded display set. Composition space (`cw`,
@@ -155,7 +140,7 @@ fun ImageSubtitleOverlay(
     bottomInsetPx: Float = 0f,
     modifier: Modifier = Modifier,
 ) {
-    val sets = remember(subtitleSession.epoch, track.id) { mutableStateOf(emptyList<DisplaySet>()) }
+    val timeline = remember(subtitleSession.epoch, track.id) { ImageSubtitleTimeline() }
     var currentSet by remember(subtitleSession.epoch, track.id) { mutableStateOf<DisplaySet?>(null) }
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
     LaunchedEffect(subtitleSession.epoch, track.id) {
@@ -225,8 +210,7 @@ fun ImageSubtitleOverlay(
             // AssSubtitleOverlay's .ass feedFrom (which can't safely
             // re-feed duplicate Dialogue lines into libass on a
             // from-scratch reconnect), re-received display sets here are
-            // harmless — MAX_BUFFERED_SETS just re-settles to the same
-            // tail. The raster fetch keeps its old one-shot behavior:
+            // deduplicated by timestamp and content in the timeline. The raster fetch keeps its old one-shot behavior:
             // it's a complete file, not a growing tap, so there's never
             // anything more to reconnect for.
             var attempt = 0
@@ -240,21 +224,17 @@ fun ImageSubtitleOverlay(
                             return@useCancellableResponse
                         }
                         val source = response.body.source()
-                        val acc = ArrayDeque<DisplaySet>()
                         while (isActive) {
                             val line = source.readUtf8Line() ?: break
                             if (line.isBlank()) continue
                             gotAnything = true
                             try {
                                 val wire = subtitleJson.decodeFromString<ImageDisplaySetWire>(line)
-                                val objects = wire.o.mapNotNull { obj ->
+                                val objects = wire.o.map { obj ->
                                     val bytes = Base64.decode(obj.png, Base64.DEFAULT)
-                                    val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                                    bitmap?.let { Positioned(obj.x, obj.y, it) }
+                                    SubtitlePng(obj.x, obj.y, bytes)
                                 }
-                                acc.addLast(DisplaySet(wire.s, wire.cw, wire.ch, objects))
-                                while (acc.size > MAX_BUFFERED_SETS) acc.removeFirst()
-                                sets.value = acc.toList()
+                                timeline.put(ImageSubtitleCue(wire.s, wire.cw, wire.ch, objects))
                             } catch (e: Exception) {
                                 // Partial/malformed line — same tolerance as
                                 // the web client's try/catch per-line.
@@ -276,6 +256,15 @@ fun ImageSubtitleOverlay(
     // Redraw cadence matches the web client's setInterval(draw, 200) —
     // well inside PGS timing tolerance.
     LaunchedEffect(subtitleSession.epoch, track.id) {
+        val decoder = DecodedSubtitleWindow { cue ->
+            val objects = cue.objects.mapNotNull { obj ->
+                BitmapFactory.decodeByteArray(obj.bytes, 0, obj.bytes.size)?.let {
+                    Positioned(obj.x, obj.y, it)
+                }
+            }
+            DisplaySet(cue.startMs, cue.compWidth, cue.compHeight, objects)
+        }
+        var lastLogMs = 0L
         while (isActive) {
             // Absolute video time in every mode: [player] is the
             // ViewModel's ForwardingPlayer, whose getCurrentPosition()
@@ -285,7 +274,22 @@ fun ImageSubtitleOverlay(
             // double-counted it, desyncing subtitles after every
             // seek/resume.
             val t = player.currentPosition
-            currentSet = sets.value.lastOrNull { it.startMs <= t }
+            val window = timeline.windowAt(t)
+            val decodeStartedMs = SystemClock.elapsedRealtime()
+            val decoded = withContext(Dispatchers.Default) { decoder.update(window) }
+            // A seek or newly received cue can change the active entry during
+            // decoding. Never publish an old cue over the new playhead.
+            currentSet = decoded.takeIf { timeline.currentAt(player.currentPosition) === window.current }
+            if (BuildConfig.DEBUG && SystemClock.elapsedRealtime() - lastLogMs >= 30_000) {
+                lastLogMs = SystemClock.elapsedRealtime()
+                val stored = timeline.storage()
+                val bitmapBytes = decoder.values().sumOf { set ->
+                    set.objects.sumOf { it.bitmap.allocationByteCount.toLong() }
+                }
+                Log.d(TAG, "image subtitle storage track=${track.id} cues=${stored.cues} " +
+                    "compressedBytes=${stored.compressedBytes} decodedCues=${decoder.size} " +
+                    "bitmapBytes=$bitmapBytes windowDecodeMs=${lastLogMs - decodeStartedMs}")
+            }
             delay(200)
         }
     }
