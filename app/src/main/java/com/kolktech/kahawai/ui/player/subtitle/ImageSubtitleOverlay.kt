@@ -32,13 +32,11 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.job
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
-import kotlin.coroutines.coroutineContext
 
 private const val TAG = "ImageSubtitleOverlay"
 
@@ -235,20 +233,11 @@ fun ImageSubtitleOverlay(
             var gotAnything = false
             while (isActive) {
                 val call = client.newCall(Request.Builder().url(url).build())
-                // execute()/readUtf8Line() are blocking calls that don't
-                // check coroutine cancellation between reads — only
-                // Call.cancel() actually interrupts a stalled read, by
-                // closing the socket. Without this hook (which
-                // AssSubtitleOverlay's tap already had), every seek's
-                // epoch bump stranded the previous connection — and the
-                // IO thread blocked on it — until the hub happened to
-                // close its end.
-                val cancelHandle = coroutineContext.job.invokeOnCompletion { call.cancel() }
                 try {
-                    call.execute().use { response ->
+                    call.useCancellableResponse { response ->
                         if (!response.isSuccessful) {
                             Log.w(TAG, "subs tap http ${response.code} for track=${track.id} attempt=$attempt")
-                            return@use
+                            return@useCancellableResponse
                         }
                         val source = response.body.source()
                         val acc = ArrayDeque<DisplaySet>()
@@ -276,8 +265,6 @@ fun ImageSubtitleOverlay(
                     throw e
                 } catch (e: Exception) {
                     Log.w(TAG, "subs tap failed for track=${track.id} attempt=$attempt", e)
-                } finally {
-                    cancelHandle.dispose()
                 }
                 val giveUp = if (gotAnything) maxAttempts == 1 else ++attempt >= maxAttempts
                 if (giveUp) break
