@@ -20,8 +20,9 @@ import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
-import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.upstream.DefaultAllocator
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -37,6 +38,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.kolktech.kahawai.R
+import com.kolktech.kahawai.BuildConfig
+import com.kolktech.kahawai.playback.PlaybackLoadControl
 import com.kolktech.kahawai.data.network.ApiClient
 import com.kolktech.kahawai.data.network.dto.CapabilityProfile
 import com.kolktech.kahawai.data.network.dto.Chapter
@@ -469,6 +472,9 @@ class PlayerViewModel(
     private val _title = MutableStateFlow<String?>(null)
     val title: StateFlow<String?> = _title
 
+    private val playbackAllocator = DefaultAllocator(true, C.DEFAULT_BUFFER_SEGMENT_SIZE)
+    private val playbackLoadControl = PlaybackLoadControl(Runtime.getRuntime().maxMemory(), playbackAllocator)
+
     private val realPlayer: ExoPlayer by lazy {
         val dataSourceFactory = DefaultDataSource.Factory(
             getApplication(),
@@ -476,34 +482,9 @@ class PlayerViewModel(
         )
         ExoPlayer.Builder(getApplication())
             .setMediaSourceFactory(buildPlayerMediaSourceFactory(dataSourceFactory))
-            // Media3's defaults (~15s minBuffer, 5s bufferForPlaybackAfterRebuffer)
-            // assume a source that can be downloaded far ahead of playback.
-            // A remux/transcode session is the opposite: the hub is
-            // encoding the HLS EVENT playlist in close to real time (see
-            // attach()'s targetOffsetMs note), so its production lead over
-            // the playhead is often just a few seconds, especially right
-            // after a session starts or right after auto-advance starts a
-            // new session while the hub is still tearing the previous one
-            // down. Holding out for 15s of buffer that the hub simply
-            // hasn't produced yet is what showed up as repeated
-            // "loading" flashes at the start of a video (worse right after
-            // auto-advance, where the hub's lead is thinnest) — the
-            // player buffers, catches up to the produced edge, stalls,
-            // and re-buffers, several times over, before the hub's lead
-            // widens enough to clear the default threshold. Shorter
-            // targets let it resume as soon as a realistic amount of
-            // media is actually available instead of chasing an
-            // unreachable buffer floor.
-            .setLoadControl(
-                DefaultLoadControl.Builder()
-                    .setBufferDurationsMs(
-                        /* minBufferMs = */ 10_000,
-                        DefaultLoadControl.DEFAULT_MAX_BUFFER_MS,
-                        /* bufferForPlaybackMs = */ 1_000,
-                        /* bufferForPlaybackAfterRebufferMs = */ 1_500,
-                    )
-                    .build(),
-            )
+            // Keep short startup/rebuffer thresholds for produced HLS,
+            // with heap headroom and Media3's smaller per-track targets.
+            .setLoadControl(playbackLoadControl)
             // handleAudioFocus=true so ExoPlayer pauses itself on transient
             // audio focus loss (e.g. an incoming call ringing) and resumes
             // when focus is returned, without us wiring up an AudioManager
@@ -511,6 +492,28 @@ class PlayerViewModel(
             .setAudioAttributes(AudioAttributes.DEFAULT, /* handleAudioFocus= */ true)
             .build()
             .apply {
+                if (BuildConfig.DEBUG) {
+                    addAnalyticsListener(object : AnalyticsListener {
+                        override fun onAudioUnderrun(
+                            eventTime: AnalyticsListener.EventTime,
+                            bufferSize: Int,
+                            bufferSizeMs: Long,
+                            elapsedSinceLastFeedMs: Long,
+                        ) {
+                            Log.w(TAG, "audio underrun positionMs=${eventTime.currentPlaybackPositionMs} " +
+                                "outputBufferMs=$bufferSizeMs lastFeedMs=$elapsedSinceLastFeedMs")
+                        }
+
+                        override fun onDroppedVideoFrames(
+                            eventTime: AnalyticsListener.EventTime,
+                            droppedFrames: Int,
+                            elapsedMs: Long,
+                        ) {
+                            Log.w(TAG, "video frames dropped positionMs=${eventTime.currentPlaybackPositionMs} " +
+                                "frames=$droppedFrames elapsedMs=$elapsedMs")
+                        }
+                    })
+                }
                 // Text tracks start DISABLED, and applySubtitleTrackSelectionOverride
                 // re-enables the renderer only while a Text-delivery track is
                 // actually picked. "No override" is not "off": DefaultTrackSelector
@@ -1943,6 +1946,13 @@ class PlayerViewModel(
                         "currentPos=${realPlayer.currentPosition} bufferedPos=${realPlayer.bufferedPosition} " +
                         "playWhenReady=${realPlayer.playWhenReady}",
                 )
+                if (BuildConfig.DEBUG) {
+                    val runtime = Runtime.getRuntime()
+                    Log.d(TAG, "playback memory mediaBytes=${playbackAllocator.totalBytesAllocated} " +
+                        "targetBytes=${playbackLoadControl.targetBytes} " +
+                        "heapUsedBytes=${runtime.totalMemory() - runtime.freeMemory()} " +
+                        "heapMaxBytes=${runtime.maxMemory()}")
+                }
                 // playWhenReady, not isPlaying — mirrors the web client's
                 // gate (web/src/views/Player.tsx's tick: `if
                 // (!video.paused) report()`). HTML5's `.paused` only
