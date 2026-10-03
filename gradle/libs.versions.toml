@@ -5,7 +5,7 @@ agp = "9.4.1"
 # org.jetbrains.kotlin.android plugin) — the compose/serialization
 # compiler plugins must match it exactly or compilation fails.
 kotlin = "2.4.20"
-coreKtx = "1.19.0"
+coreKtx = "1.19.1"
 lifecycle = "2.11.0"
 activityCompose = "1.13.0"
 composeBom = "2026.09.00"
