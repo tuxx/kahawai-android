@@ -11,6 +11,8 @@ data class VideoCap(
     val codec: String,
     val maxProfile: String? = null,
     val maxLevel: String? = null,
+    // Decoded bits per component; null keeps old-client negotiation semantics.
+    val maxBitDepth: Int? = null,
 )
 
 /// Mirrors `TargetDuration` (`#[serde(tag = "mode")]`). Required on

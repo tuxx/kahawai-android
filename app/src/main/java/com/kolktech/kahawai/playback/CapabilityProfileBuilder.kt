@@ -70,13 +70,18 @@ object CapabilityProfileBuilder {
     /// from a coroutine already) rather than paid on the UI thread right
     /// as the user presses Play.
     suspend fun build(context: Context): CapabilityProfile = withContext(Dispatchers.Default) {
-        val decodedMimes = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
-            .asSequence()
-            .filter { !it.isEncoder }
+        val decoders = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.filter { !it.isEncoder }
+        val decodedMimes = decoders.asSequence()
             .flatMap { it.supportedTypes.asSequence() }
             .toSet()
 
-        val video = VIDEO_CODECS.filter { (_, mime) -> mime in decodedMimes }.map { (name, _) -> VideoCap(codec = name) }
+        val video = VIDEO_CODECS.filter { (_, mime) -> mime in decodedMimes }.map { (name, mime) ->
+            val profiles = decoders.filter { mime in it.supportedTypes }.flatMap { decoder ->
+                runCatching { decoder.getCapabilitiesForType(mime).profileLevels.map { it.profile } }
+                    .getOrDefault(emptyList())
+            }
+            VideoCap(codec = name, maxBitDepth = decoderBitDepth(name, profiles))
+        }
         // Passthrough is read for the sink that is actually connected — the
         // platform's surround settings plus what the HDMI device reports —
         // so this answer follows the receiver the box is plugged into today,
