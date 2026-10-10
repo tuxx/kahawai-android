@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Single-colour Kahawai mark for themed icons; the launcher supplies the tint. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:scaleX="0.42857"
+        android:scaleY="0.42857"
+        android:translateX="28.286"
+        android:translateY="28.286">
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M 29.78125,20.769531 C 27.260417,20.798177 26,22.875 26,27 v 34.445312 c 2.635875,0.821052 5.129784,1.869847 7.523438,2.855469 4.25,1.75 8.183944,3.300223 11.693359,3.65625 3.509415,0.356028 6.564854,-0.188245 10.328125,-3.115234 C 64.998293,57.489175 74.401961,53.5 84,53.5 c 3.393765,0 6.763188,0.498915 10.119141,1.46875 L 34,22 c -1.666667,-0.833333 -3.072917,-1.24349 -4.21875,-1.230469 z" />
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="m 84,61.5 c -7.401961,0 -14.998293,3.010825 -23.544922,9.658203 -5.236729,4.073011 -10.93129,5.278738 -16.046875,4.759766 -5.115585,-0.518973 -9.681641,-2.46875 -13.931641,-4.21875 C 28.941435,71.067108 27.447544,70.460852 26,69.927734 V 93 c 0,6 2.666667,7.66667 8,5 L 95.886719,64.0625 C 91.799201,62.324419 87.872824,61.5 84,61.5 Z" />
+    </group>
+</vector>

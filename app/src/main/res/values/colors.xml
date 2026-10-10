@@ -7,7 +7,7 @@
          it. Both painted by SeekWindowTimeBar, so neither tints the other. -->
     <color name="kahawai_timebar_seekable">#99FFFFFF</color>
     <color name="kahawai_timebar_base">#33FFFFFF</color>
-    <!-- Matches the kahawai.png logo's own white backdrop so the safe-zone
-         padding around ic_launcher_foreground blends in seamlessly. -->
-    <color name="ic_launcher_background">#FFFFFF</color>
+    <!-- The logo's own tile colour (kahawai-app-icon.svg); tv_banner.png is
+         rendered on the same shade. -->
+    <color name="ic_launcher_background">#16262A</color>
 </resources>
