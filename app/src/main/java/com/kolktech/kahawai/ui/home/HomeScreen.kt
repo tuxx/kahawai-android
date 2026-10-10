@@ -1,6 +1,8 @@
 package com.kolktech.kahawai.ui.home
 
 import android.content.res.Configuration
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -9,10 +11,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Logout
@@ -30,7 +34,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -42,9 +45,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -64,6 +71,7 @@ private val POSTER_MIN_WIDTH = 100.dp
 // column would make each one nearly square-cropped instead of a banner.
 private val CONTINUE_WATCHING_MIN_WIDTH = 200.dp
 private val GRID_SPACING = 10.dp
+private val HEADER_SHAPE = RoundedCornerShape(8.dp)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -330,36 +338,54 @@ private fun UpNextHeader() {
     )
 }
 
+/// The whole bar is the "see all" target rather than a small button at its
+/// end: one wide tap target on touch, and a single D-pad stop per library
+/// on TV — moving up/down through the grid lands on the title itself, so a
+/// remote never has to steer sideways to a corner button to open a library.
 @Composable
 private fun LibraryHeader(
     row: LibraryRow,
     onOpenLibrary: (id: String, name: String) -> Unit,
 ) {
+    // Same reasoning as PosterCard: D-pad focus needs its own obvious
+    // affordance, so the bar gets a tinted fill and the accent color.
+    var focused by remember { mutableStateOf(false) }
+    val contentColor = if (focused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground
+    val secondaryColor = if (focused) MaterialTheme.colorScheme.primary else KahawaiOnSurfaceVariant
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().padding(top = 20.dp, start = 16.dp, end = 4.dp, bottom = 8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp, start = 8.dp, end = 8.dp, bottom = 4.dp)
+            .clip(HEADER_SHAPE)
+            .background(if (focused) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else Color.Transparent)
+            .onFocusChanged { focused = it.isFocused }
+            .clickable(
+                onClickLabel = stringResource(R.string.home_open_library, row.library.name),
+                role = Role.Button,
+            ) { onOpenLibrary(row.library.id, row.library.name) }
+            .heightIn(min = 48.dp)
+            .padding(horizontal = 8.dp),
     ) {
         Text(
             row.library.name,
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onBackground,
+            color = contentColor,
         )
         Icon(
             Icons.AutoMirrored.Filled.ArrowForward,
             contentDescription = null,
-            tint = KahawaiOnSurfaceVariant,
+            tint = secondaryColor,
             modifier = Modifier.padding(start = 6.dp).size(16.dp),
         )
         Spacer(modifier = Modifier.weight(1f))
         if (row.total > row.items.size) {
-            TextButton(onClick = { onOpenLibrary(row.library.id, row.library.name) }) {
-                Text(
-                    stringResource(R.string.home_see_all, row.total),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = KahawaiOnSurfaceVariant,
-                )
-            }
+            Text(
+                stringResource(R.string.home_see_all, row.total),
+                style = MaterialTheme.typography.bodySmall,
+                color = secondaryColor,
+            )
         }
     }
 }
