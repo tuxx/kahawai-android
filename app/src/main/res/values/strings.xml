@@ -5,29 +5,14 @@
 
     <!-- Shared across multiple screens -->
     <string name="search">Search</string>
-    <string name="save">Save</string>
     <string name="default_label">Default</string>
     <string name="subtitle_off">Off</string>
     <string name="subtitles">Subtitles</string>
     <string name="audio">Audio</string>
     <string name="watched">Watched</string>
-    <string name="delete">Delete</string>
-    <string name="refresh">Refresh</string>
-    <string name="create">Create</string>
-    <string name="approve">Approve</string>
-    <string name="apply">Apply</string>
-    <string name="reset">Reset</string>
-    <string name="enable">Enable</string>
-    <string name="disable">Disable</string>
-    <string name="disconnect">Disconnect</string>
+    <string name="cancel">Cancel</string>
     <string name="username">Username</string>
     <string name="password">Password</string>
-    <string name="move_up">Move up</string>
-    <string name="move_down">Move down</string>
-    <!-- "1. Provider name" style ordered-list rows (provider chains, ASS fallback order) -->
-    <string name="numbered_item">%1$d. %2$s</string>
-    <string name="unknown">unknown</string>
-    <string name="end">End</string>
 
     <!-- Home -->
     <string name="home_menu">Menu</string>
@@ -83,37 +68,15 @@
     <string name="setup_unreachable">Couldn\'t reach %1$s: %2$s</string>
     <string name="setup_admin_required">This hub doesn\'t have an admin account yet. Finish setup in a browser on the machine running the hub, then come back here to sign in.</string>
 
-    <!-- Settings hub -->
+    <!-- Settings -->
     <string name="settings_title">Settings</string>
-    <string name="settings_language">Language</string>
-    <string name="settings_language_desc">App display language</string>
-    <string name="settings_interface">Interface</string>
-    <string name="settings_interface_desc">Display and layout</string>
-    <string name="settings_player">Player</string>
-    <string name="settings_player_desc">Gestures and seeking</string>
-    <string name="settings_network">Network</string>
-    <string name="settings_network_desc">Hub server and connection</string>
-    <string name="settings_server_settings">Server settings</string>
-    <string name="settings_server_settings_desc">OpenSubtitles account, bandwidth cap, subtitle fallback order</string>
-    <string name="settings_server_admin_settings">Server admin settings</string>
-    <string name="settings_server_admin_settings_desc">Libraries, mediahosts, metadata providers, active sessions</string>
-    <string name="settings_cache">Cache</string>
-    <string name="settings_cache_desc">Downloaded and buffered media</string>
-    <string name="settings_about">About</string>
-    <string name="settings_about_desc">Version and app info</string>
-
-    <!-- Interface settings -->
-    <string name="interface_settings_title">Interface</string>
-    <string name="settings_reserve_notch_space">Reserve space for camera notch</string>
-    <string name="settings_reserve_notch_space_hint">Turn off if your screen reports a notch that isn\'t really there</string>
-
-    <!-- Language settings -->
-    <string name="language_settings_title">Language</string>
-    <string name="language_settings_app_language">App language</string>
-    <string name="language_settings_english">English</string>
-
-    <!-- Player settings -->
-    <string name="player_settings_title">Player</string>
+    <string name="settings_playback">Playback</string>
+    <string name="settings_display">Display</string>
+    <string name="settings_connection">Connection</string>
+    <string name="player_settings_seeking">Seeking</string>
+    <string name="player_settings_seeking_desc">Back %1$ss · Forward %2$ss</string>
+    <string name="player_settings_auto_skip">Auto-skip intros &amp; outros</string>
+    <string name="player_settings_auto_skip_hint">Automatically skip recaps, intros and credits the hub has found, without waiting for the Skip button to be pressed</string>
     <string name="player_settings_gestures">Gestures</string>
     <string name="player_settings_gestures_enabled">Player gestures</string>
     <string name="player_settings_gestures_enabled_hint">When off, every quick gesture below is disabled</string>
@@ -125,88 +88,18 @@
     <string name="player_settings_zoom_gesture_hint">Pinch to fill the screen with the video</string>
     <string name="player_settings_remember_brightness">Remember brightness level</string>
     <string name="player_settings_remember_brightness_hint">Keep the brightness level you set in the player between sessions</string>
-    <string name="player_settings_seeking">Seeking</string>
-    <string name="player_settings_seeking_desc">Back %1$ss · Forward %2$ss</string>
-    <string name="player_settings_skipping">Skipping</string>
-    <string name="player_settings_auto_skip">Auto-skip intros &amp; outros</string>
-    <string name="player_settings_auto_skip_hint">Automatically skip recaps, intros and credits the hub has found, without waiting for the Skip button to be pressed</string>
+    <string name="settings_reserve_notch_space">Reserve space for camera notch</string>
+    <string name="settings_reserve_notch_space_hint">Turn off if your screen reports a notch that isn\'t really there</string>
+    <string name="settings_change_server">Change server</string>
+    <string name="settings_change_server_confirm">You\'ll be signed out and asked for a hub address again.</string>
+    <string name="settings_server_not_configured">not configured</string>
+    <string name="about_version">kahawai %1$s</string>
 
     <!-- Seeking settings -->
     <string name="seeking_settings_title">Seeking</string>
     <string name="seeking_settings_back_increment">Seek back increment</string>
     <string name="seeking_settings_forward_increment">Seek forward increment</string>
     <string name="seeking_settings_ms_suffix">ms</string>
-
-    <!-- Network settings -->
-    <string name="network_settings_title">Network</string>
-    <string name="network_settings_hub_server">Hub server</string>
-    <string name="network_settings_not_configured">not configured</string>
-    <string name="network_settings_change_server">Change server</string>
-
-    <!-- Cache settings -->
-    <string name="cache_settings_title">Cache</string>
-    <string name="cache_settings_placeholder">Cache settings are coming soon.</string>
-
-    <!-- About -->
-    <string name="about_title">About</string>
-    <string name="about_version">kahawai %1$s</string>
-
-    <!-- Server (per-user hub) settings -->
-    <string name="server_settings_title">Server settings</string>
-    <string name="server_settings_opensubtitles">OpenSubtitles</string>
-    <string name="server_settings_opensubtitles_desc">Attach your own opensubtitles.com account to use your own download budget instead of the shared one.</string>
-    <string name="server_settings_opensubtitles_configured_hint">account configured — enter to replace</string>
-    <string name="server_settings_playback">Playback</string>
-    <string name="server_settings_bandwidth">Bandwidth cap (kbit/s, blank = none)</string>
-    <string name="server_settings_ass_fallback_desc">Styled subtitle fallback — first rung this client and fleet can serve wins</string>
-    <string name="server_settings_audio_hint">Audio (e.g. original,en,ja)</string>
-    <string name="server_settings_subs_hint">Subtitles (e.g. en,nl)</string>
-
-    <!-- Admin -->
-    <string name="admin_title">Admin</string>
-    <string name="admin_metadata_providers">Metadata providers</string>
-    <string name="admin_tmdb_key_configured">TMDB key (configured — replace)</string>
-    <string name="admin_tmdb_key">TMDB API key</string>
-    <string name="admin_enriching">Enriching…</string>
-    <string name="admin_enrich_now">Enrich now</string>
-    <string name="admin_enrich_stats">%1$d matched · %2$d weak · %3$d missed</string>
-    <string name="admin_tvdb_key_configured">TVDB key (configured — replace)</string>
-    <string name="admin_tvdb_key">TVDB API key</string>
-    <string name="admin_pin">PIN</string>
-    <string name="admin_anidb_username_configured">AniDB username (configured — replace)</string>
-    <string name="admin_anidb_username">AniDB username</string>
-    <string name="admin_anidb_password">AniDB password</string>
-    <string name="admin_anidb_udp_key">UDP API key (optional)</string>
-    <string name="higher_precedence">Higher precedence</string>
-    <string name="lower_precedence">Lower precedence</string>
-    <string name="admin_pending_enrollments">Pending enrollments</string>
-    <string name="admin_no_pending">None. A new satellite prints its code on its console when it first starts.</string>
-    <string name="admin_pending_item">%1$s · %2$s · %3$s</string>
-    <string name="admin_enrollment_code">Enrollment code (XXXX-XXXX)</string>
-    <string name="admin_satellites">Satellites</string>
-    <string name="admin_no_satellites">No satellites enrolled.</string>
-    <string name="online">online</string>
-    <string name="offline">offline</string>
-    <string name="disabled">disabled</string>
-    <string name="confirm_delete_revoke">Really delete + revoke?</string>
-    <string name="admin_libraries">Libraries</string>
-    <string name="admin_new_library_name">New library name</string>
-    <string name="admin_attach">attach…</string>
-    <string name="admin_offline_suffix"> (offline)</string>
-    <string name="admin_scanned">scanned</string>
-    <string name="admin_scanning">scanning</string>
-    <string name="admin_active_sessions">Active sessions</string>
-    <string name="admin_no_sessions">Nobody is streaming.</string>
-    <string name="admin_notice_approved">Approved: %1$s</string>
-    <string name="admin_notice_deleted">Deleted %1$s: certificate revoked, collections removed.</string>
-    <string name="admin_notice_refresh">Refresh requested: %1$d collection(s)</string>
-    <string name="admin_notice_refresh_offline_suffix">, %1$d offline</string>
-    <string name="admin_notice_tmdb_saved">TMDB key saved — enrichment started</string>
-    <string name="admin_notice_tvdb_saved">TVDB key saved — enrichment started</string>
-    <string name="admin_notice_anidb_verified">AniDB account verified — enrichment started</string>
-    <string name="admin_notice_anidb_failed">AniDB saved but login failed: %1$s</string>
-    <string name="admin_notice_chain_applied">%1$s: provider order applied — metadata re-merged</string>
-    <string name="admin_notice_error">Error: %1$s</string>
 
     <!-- Player -->
     <string name="resize_fit">Fit</string>

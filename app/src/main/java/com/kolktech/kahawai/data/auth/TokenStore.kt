@@ -71,12 +71,6 @@ class TokenStore(private val context: Context) : TokenStorage {
     override val refreshToken: String? get() = cache?.second
     val hasTokens: Boolean get() = cache != null
 
-    /// UI-only hint (menu item visibility) decoded from the current access
-    /// token's `admin` claim — see [decodeAdminClaim]. Not re-derived on
-    /// refresh notifications; good enough since the claim doesn't change
-    /// for the lifetime of a signed-in session.
-    val isAdmin: Boolean get() = accessToken?.let(::decodeAdminClaim) ?: false
-
     override suspend fun save(tokens: TokenPair) {
         cache = tokens.accessToken to tokens.refreshToken
         context.tokenDataStore.edit { prefs ->

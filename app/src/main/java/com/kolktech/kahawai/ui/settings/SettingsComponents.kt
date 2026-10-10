@@ -16,12 +16,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 
-/// Section header used across the settings screens — mirrors
-/// [ServerSettingsScreen]'s private `SectionTitle`, kept as a shared
-/// composable here since every new settings screen needs the same look.
+/// Section header on the settings screen.
 @Composable
 fun SettingsSectionTitle(text: String, modifier: Modifier = Modifier) {
     Text(
@@ -31,39 +28,8 @@ fun SettingsSectionTitle(text: String, modifier: Modifier = Modifier) {
     )
 }
 
-/// A navigable category row on the settings hub screen — icon, title,
-/// optional description, on a rounded surface card.
-@Composable
-fun SettingsCategoryRow(
-    icon: ImageVector,
-    title: String,
-    description: String? = null,
-    onClick: () -> Unit,
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
-            .padding(16.dp),
-    ) {
-        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        Column(modifier = Modifier.padding(start = 16.dp)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
-            if (description != null) {
-                Text(
-                    description,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
-}
-
-/// A titled row with a trailing [Switch] — used by every toggle in the
-/// Player settings screen. [enabled] greys the row out and blocks
+/// A titled row with a trailing [Switch] — used by every toggle on the
+/// settings screen. [enabled] greys the row out and blocks
 /// interaction (used for gestures that depend on the master
 /// "Player gestures" switch) without touching the underlying value.
 @Composable
@@ -102,9 +68,8 @@ fun SettingsSwitchRow(
 }
 
 /// Same card look as [SettingsSwitchRow] (title + description, no leading
-/// icon) but navigates to a sub-screen instead of toggling a value —
-/// used for "Seeking" under Player so it reads as part of the same list
-/// rather than a visually distinct hub-style entry.
+/// icon) but navigates somewhere instead of toggling a value, so
+/// "Seeking" and "Change server" read as part of the same list.
 @Composable
 fun SettingsNavigationRow(
     title: String,

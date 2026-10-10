@@ -3,48 +3,70 @@ package com.kolktech.kahawai.ui.settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.AdminPanelSettings
-import androidx.compose.material.icons.filled.CloudSync
-import androidx.compose.material.icons.filled.Fullscreen
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Language
-import androidx.compose.material.icons.filled.PlayCircle
-import androidx.compose.material.icons.filled.Storage
-import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.kolktech.kahawai.BuildConfig
 import com.kolktech.kahawai.R
+import com.kolktech.kahawai.data.auth.ServerConfigStore
+import com.kolktech.kahawai.data.auth.TokenStore
+import com.kolktech.kahawai.data.settings.AppSettingsStore
+import kotlinx.coroutines.launch
 
-/// Landing page for every device-local and per-user-on-hub setting —
-/// replaces the old flat "App settings" screen. Each row below navigates
-/// into its own category screen.
+/// Every device-local setting on one scrolling page, grouped under
+/// section headers. Only the seek increments (free-text fields) get a
+/// screen of their own.
+///
+/// [reserveNotchSpace]/[onReserveNotchSpaceChange] are threaded in from
+/// [com.kolktech.kahawai.ui.nav.KahawaiNavGraph] rather than read straight
+/// from the store here, so a toggle takes effect on this very screen the
+/// instant it's flipped — the nav graph's own window-inset handling reacts
+/// to the same Compose state, not just to a later route change.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    isAdmin: Boolean,
+    appSettingsStore: AppSettingsStore,
+    serverConfigStore: ServerConfigStore,
+    tokenStore: TokenStore,
+    reserveNotchSpace: Boolean,
+    onReserveNotchSpaceChange: (Boolean) -> Unit,
     onBack: () -> Unit,
-    onOpenLanguage: () -> Unit,
-    onOpenInterface: () -> Unit,
-    onOpenPlayer: () -> Unit,
-    onOpenNetwork: () -> Unit,
-    onOpenServerSettings: () -> Unit,
-    onOpenAdmin: () -> Unit,
-    onOpenCache: () -> Unit,
-    onOpenAbout: () -> Unit,
+    onOpenSeeking: () -> Unit,
+    onChangeServer: () -> Unit,
 ) {
+    var gesturesEnabled by remember { mutableStateOf(appSettingsStore.playerGesturesEnabled) }
+    var volumeBrightnessEnabled by remember { mutableStateOf(appSettingsStore.volumeBrightnessGestureEnabled) }
+    var seekGestureEnabled by remember { mutableStateOf(appSettingsStore.seekGestureEnabled) }
+    var zoomGestureEnabled by remember { mutableStateOf(appSettingsStore.zoomGestureEnabled) }
+    var rememberBrightness by remember { mutableStateOf(appSettingsStore.rememberBrightnessLevel) }
+    val seekBackMs = remember { mutableStateOf(appSettingsStore.seekBackMs) }
+    val seekForwardMs = remember { mutableStateOf(appSettingsStore.seekForwardMs) }
+    var autoSkipIntrosOutros by remember { mutableStateOf(appSettingsStore.autoSkipIntrosOutros) }
+    var confirmChangeServer by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -62,59 +84,128 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            SettingsCategoryRow(
-                icon = Icons.Default.Language,
-                title = stringResource(R.string.settings_language),
-                description = stringResource(R.string.settings_language_desc),
-                onClick = onOpenLanguage,
+            SettingsSectionTitle(stringResource(R.string.settings_playback))
+            SettingsNavigationRow(
+                title = stringResource(R.string.player_settings_seeking),
+                description = stringResource(
+                    R.string.player_settings_seeking_desc,
+                    seekBackMs.value / 1000,
+                    seekForwardMs.value / 1000,
+                ),
+                onClick = onOpenSeeking,
             )
-            SettingsCategoryRow(
-                icon = Icons.Default.Fullscreen,
-                title = stringResource(R.string.settings_interface),
-                description = stringResource(R.string.settings_interface_desc),
-                onClick = onOpenInterface,
+            SettingsSwitchRow(
+                title = stringResource(R.string.player_settings_auto_skip),
+                description = stringResource(R.string.player_settings_auto_skip_hint),
+                checked = autoSkipIntrosOutros,
+                onCheckedChange = {
+                    autoSkipIntrosOutros = it
+                    appSettingsStore.autoSkipIntrosOutros = it
+                },
             )
-            SettingsCategoryRow(
-                icon = Icons.Default.PlayCircle,
-                title = stringResource(R.string.settings_player),
-                description = stringResource(R.string.settings_player_desc),
-                onClick = onOpenPlayer,
+
+            SettingsSectionTitle(stringResource(R.string.player_settings_gestures))
+            SettingsSwitchRow(
+                title = stringResource(R.string.player_settings_gestures_enabled),
+                description = stringResource(R.string.player_settings_gestures_enabled_hint),
+                checked = gesturesEnabled,
+                onCheckedChange = {
+                    gesturesEnabled = it
+                    appSettingsStore.playerGesturesEnabled = it
+                },
             )
-            SettingsCategoryRow(
-                icon = Icons.Default.Wifi,
-                title = stringResource(R.string.settings_network),
-                description = stringResource(R.string.settings_network_desc),
-                onClick = onOpenNetwork,
+            SettingsSwitchRow(
+                title = stringResource(R.string.player_settings_volume_brightness),
+                description = stringResource(R.string.player_settings_volume_brightness_hint),
+                checked = volumeBrightnessEnabled,
+                enabled = gesturesEnabled,
+                onCheckedChange = {
+                    volumeBrightnessEnabled = it
+                    appSettingsStore.volumeBrightnessGestureEnabled = it
+                },
             )
-            SettingsCategoryRow(
-                icon = Icons.Default.CloudSync,
-                title = stringResource(R.string.settings_server_settings),
-                description = stringResource(R.string.settings_server_settings_desc),
-                onClick = onOpenServerSettings,
+            SettingsSwitchRow(
+                title = stringResource(R.string.player_settings_seek_gesture),
+                description = stringResource(R.string.player_settings_seek_gesture_hint),
+                checked = seekGestureEnabled,
+                enabled = gesturesEnabled,
+                onCheckedChange = {
+                    seekGestureEnabled = it
+                    appSettingsStore.seekGestureEnabled = it
+                },
             )
-            if (isAdmin) {
-                SettingsCategoryRow(
-                    icon = Icons.Default.AdminPanelSettings,
-                    title = stringResource(R.string.settings_server_admin_settings),
-                    description = stringResource(R.string.settings_server_admin_settings_desc),
-                    onClick = onOpenAdmin,
-                )
-            }
-            SettingsCategoryRow(
-                icon = Icons.Default.Storage,
-                title = stringResource(R.string.settings_cache),
-                description = stringResource(R.string.settings_cache_desc),
-                onClick = onOpenCache,
+            SettingsSwitchRow(
+                title = stringResource(R.string.player_settings_zoom_gesture),
+                description = stringResource(R.string.player_settings_zoom_gesture_hint),
+                checked = zoomGestureEnabled,
+                enabled = gesturesEnabled,
+                onCheckedChange = {
+                    zoomGestureEnabled = it
+                    appSettingsStore.zoomGestureEnabled = it
+                },
             )
-            SettingsCategoryRow(
-                icon = Icons.Default.Info,
-                title = stringResource(R.string.settings_about),
-                description = stringResource(R.string.settings_about_desc),
-                onClick = onOpenAbout,
+            SettingsSwitchRow(
+                title = stringResource(R.string.player_settings_remember_brightness),
+                description = stringResource(R.string.player_settings_remember_brightness_hint),
+                checked = rememberBrightness,
+                enabled = gesturesEnabled,
+                onCheckedChange = {
+                    rememberBrightness = it
+                    appSettingsStore.rememberBrightnessLevel = it
+                },
+            )
+
+            SettingsSectionTitle(stringResource(R.string.settings_display))
+            SettingsSwitchRow(
+                title = stringResource(R.string.settings_reserve_notch_space),
+                description = stringResource(R.string.settings_reserve_notch_space_hint),
+                checked = reserveNotchSpace,
+                onCheckedChange = onReserveNotchSpaceChange,
+            )
+
+            SettingsSectionTitle(stringResource(R.string.settings_connection))
+            SettingsNavigationRow(
+                title = stringResource(R.string.settings_change_server),
+                description = serverConfigStore.baseUrl ?: stringResource(R.string.settings_server_not_configured),
+                onClick = { confirmChangeServer = true },
+            )
+
+            Text(
+                stringResource(R.string.about_version, BuildConfig.VERSION_NAME),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(top = 24.dp),
             )
         }
+    }
+
+    if (confirmChangeServer) {
+        AlertDialog(
+            onDismissRequest = { confirmChangeServer = false },
+            title = { Text(stringResource(R.string.settings_change_server)) },
+            text = { Text(stringResource(R.string.settings_change_server_confirm)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmChangeServer = false
+                        coroutineScope.launch {
+                            tokenStore.clear()
+                            serverConfigStore.baseUrl = null
+                            onChangeServer()
+                        }
+                    },
+                ) { Text(stringResource(R.string.settings_change_server)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmChangeServer = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
     }
 }

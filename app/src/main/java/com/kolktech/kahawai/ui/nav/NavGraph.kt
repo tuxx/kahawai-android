@@ -37,7 +37,6 @@ import kotlinx.coroutines.launch
 import com.kolktech.kahawai.data.network.apiJson
 import com.kolktech.kahawai.data.repository.AuthRepository
 import com.kolktech.kahawai.data.repository.CatalogRepository
-import com.kolktech.kahawai.ui.admin.AdminScreen
 import com.kolktech.kahawai.ui.detail.DetailScreen
 import com.kolktech.kahawai.ui.home.HomeScreen
 import com.kolktech.kahawai.ui.library.LibraryScreen
@@ -45,14 +44,7 @@ import com.kolktech.kahawai.ui.login.LoginScreen
 import com.kolktech.kahawai.ui.player.PlaybackPrefetch
 import com.kolktech.kahawai.ui.player.PlayerScreen
 import com.kolktech.kahawai.ui.search.SearchScreen
-import com.kolktech.kahawai.ui.settings.AboutScreen
-import com.kolktech.kahawai.ui.settings.CacheSettingsScreen
-import com.kolktech.kahawai.ui.settings.InterfaceSettingsScreen
-import com.kolktech.kahawai.ui.settings.LanguageSettingsScreen
-import com.kolktech.kahawai.ui.settings.NetworkSettingsScreen
-import com.kolktech.kahawai.ui.settings.PlayerSettingsScreen
 import com.kolktech.kahawai.ui.settings.SeekingSettingsScreen
-import com.kolktech.kahawai.ui.settings.ServerSettingsScreen
 import com.kolktech.kahawai.ui.settings.SettingsScreen
 import com.kolktech.kahawai.ui.setup.ServerSetupScreen
 
@@ -75,15 +67,7 @@ private object Routes {
     const val HOME = "home"
     const val SEARCH = "search"
     const val SETTINGS = "settings"
-    const val SETTINGS_LANGUAGE = "settings_language"
-    const val SETTINGS_INTERFACE = "settings_interface"
-    const val SETTINGS_PLAYER = "settings_player"
     const val SETTINGS_PLAYER_SEEKING = "settings_player_seeking"
-    const val SETTINGS_NETWORK = "settings_network"
-    const val SETTINGS_CACHE = "settings_cache"
-    const val SETTINGS_ABOUT = "settings_about"
-    const val SERVER_SETTINGS = "server_settings"
-    const val ADMIN = "admin"
     const val LIBRARY = "library/{libraryId}?name={name}"
     const val DETAIL = "detail/{itemId}?library={library}"
     const val PLAYER =
@@ -180,7 +164,7 @@ fun KahawaiNavGraph(app: KahawaiApp, modifier: Modifier = Modifier) {
     // effect had set) and the Compose-side padding below.
     //
     // Held as Compose state here (rather than read straight from the
-    // store each time) so InterfaceSettingsScreen flipping it recomposes
+    // store each time) so SettingsScreen flipping it recomposes
     // this graph immediately — both effects below rerun on the same
     // frame, on whatever screen is currently showing, instead of only
     // taking effect after the next route change.
@@ -267,70 +251,22 @@ fun KahawaiNavGraph(app: KahawaiApp, modifier: Modifier = Modifier) {
         }
         composable(Routes.SETTINGS) {
             SettingsScreen(
-                isAdmin = app.tokenStore.isAdmin,
-                onBack = { navController.popBackStack() },
-                onOpenLanguage = { navController.navigate(Routes.SETTINGS_LANGUAGE) },
-                onOpenInterface = { navController.navigate(Routes.SETTINGS_INTERFACE) },
-                onOpenPlayer = { navController.navigate(Routes.SETTINGS_PLAYER) },
-                onOpenNetwork = { navController.navigate(Routes.SETTINGS_NETWORK) },
-                onOpenServerSettings = { navController.navigate(Routes.SERVER_SETTINGS) },
-                onOpenAdmin = { navController.navigate(Routes.ADMIN) },
-                onOpenCache = { navController.navigate(Routes.SETTINGS_CACHE) },
-                onOpenAbout = { navController.navigate(Routes.SETTINGS_ABOUT) },
-            )
-        }
-        composable(Routes.SETTINGS_LANGUAGE) {
-            LanguageSettingsScreen(
                 appSettingsStore = app.appSettingsStore,
-                onBack = { navController.popBackStack() },
-            )
-        }
-        composable(Routes.SETTINGS_INTERFACE) {
-            InterfaceSettingsScreen(
+                serverConfigStore = app.serverConfigStore,
+                tokenStore = app.tokenStore,
                 reserveNotchSpace = reserveNotchSpace,
                 onReserveNotchSpaceChange = onReserveNotchSpaceChange,
                 onBack = { navController.popBackStack() },
-            )
-        }
-        composable(Routes.SETTINGS_PLAYER) {
-            PlayerSettingsScreen(
-                appSettingsStore = app.appSettingsStore,
-                onBack = { navController.popBackStack() },
                 onOpenSeeking = { navController.navigate(Routes.SETTINGS_PLAYER_SEEKING) },
+                onChangeServer = {
+                    navController.navigate(Routes.SETUP) { popUpTo(0) { inclusive = true } }
+                },
             )
         }
         composable(Routes.SETTINGS_PLAYER_SEEKING) {
             SeekingSettingsScreen(
                 appSettingsStore = app.appSettingsStore,
                 onBack = { navController.popBackStack() },
-            )
-        }
-        composable(Routes.SETTINGS_NETWORK) {
-            NetworkSettingsScreen(
-                serverConfigStore = app.serverConfigStore,
-                tokenStore = app.tokenStore,
-                onBack = { navController.popBackStack() },
-                onChangeServer = {
-                    navController.navigate(Routes.SETUP) { popUpTo(0) { inclusive = true } }
-                },
-            )
-        }
-        composable(Routes.SETTINGS_CACHE) {
-            CacheSettingsScreen(onBack = { navController.popBackStack() })
-        }
-        composable(Routes.SETTINGS_ABOUT) {
-            AboutScreen(onBack = { navController.popBackStack() })
-        }
-        composable(Routes.SERVER_SETTINGS) {
-            ServerSettingsScreen(
-                onBack = { navController.popBackStack() },
-                onSessionExpired = onSessionExpired,
-            )
-        }
-        composable(Routes.ADMIN) {
-            AdminScreen(
-                onBack = { navController.popBackStack() },
-                onSessionExpired = onSessionExpired,
             )
         }
         composable(Routes.SEARCH) {

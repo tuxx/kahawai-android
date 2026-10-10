@@ -66,8 +66,9 @@ entry, D-pad friendly UI).
   either way. The CC control follows the hub subtitle list and selected track,
   including ASS/image overlays; direct-play embedded bitmap tracks still use
   Media3's native track selection.
-- **Admin & settings**: hub administration and app settings screens
-  (`ui/admin/`, `ui/settings/`), reachable from the navigation drawer.
+- **Settings**: device-local app settings on a single screen
+  (`ui/settings/`), reachable from the home menu. Hub administration and
+  per-user hub preferences are left to the web client.
 
 ## Known gaps (for now)
 
