@@ -1,11 +1,13 @@
 package com.kolktech.kahawai.ui.setup
 
 import android.app.Application
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
@@ -22,6 +24,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
@@ -56,6 +59,11 @@ fun ServerSetupScreen(
             .padding(32.dp),
         verticalArrangement = Arrangement.Center,
     ) {
+        Image(
+            painter = painterResource(R.drawable.kahawai_lockup),
+            contentDescription = stringResource(R.string.app_name),
+            modifier = Modifier.padding(bottom = 32.dp).height(36.dp),
+        )
         Text(stringResource(R.string.setup_title), style = MaterialTheme.typography.headlineSmall)
         Text(
             stringResource(R.string.setup_hint),

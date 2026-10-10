@@ -1,10 +1,12 @@
 package com.kolktech.kahawai.ui.login
 
 import android.app.Application
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
@@ -23,6 +25,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.autofill.ContentType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentType
 import androidx.compose.ui.semantics.semantics
@@ -59,6 +62,11 @@ fun LoginScreen(
             .padding(32.dp),
         verticalArrangement = Arrangement.Center,
     ) {
+        Image(
+            painter = painterResource(R.drawable.kahawai_lockup),
+            contentDescription = stringResource(R.string.app_name),
+            modifier = Modifier.padding(bottom = 32.dp).height(36.dp),
+        )
         Text(stringResource(R.string.login_sign_in), style = MaterialTheme.typography.headlineSmall)
         OutlinedTextField(
             value = username,
