@@ -70,6 +70,7 @@ private val GRID_SPACING = 10.dp
 fun HomeScreen(
     repo: CatalogRepository,
     onOpenItem: (itemId: String, libraryId: String) -> Unit,
+    onOpenFeedItem: (item: Item) -> Unit,
     onOpenLibrary: (id: String, name: String) -> Unit,
     onSearch: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -207,7 +208,7 @@ fun HomeScreen(
                                                 chunk,
                                                 continueWatchingColumns,
                                                 repo,
-                                                onOpenItem,
+                                                onOpenFeedItem,
                                                 firstItemFocusRequester = if (chunkIndex == 0) {
                                                     firstItemFocusRequester
                                                 } else {
@@ -232,7 +233,7 @@ fun HomeScreen(
                                                 chunk,
                                                 continueWatchingColumns,
                                                 repo,
-                                                onOpenItem,
+                                                onOpenFeedItem,
                                                 firstItemFocusRequester = if (s.continueWatching.isEmpty() &&
                                                     chunkIndex == 0
                                                 ) {
@@ -368,7 +369,7 @@ private fun ContinueWatchingGridRow(
     chunk: List<Item>,
     columns: Int,
     repo: CatalogRepository,
-    onOpenItem: (itemId: String, libraryId: String) -> Unit,
+    onOpenItem: (item: Item) -> Unit,
     firstItemFocusRequester: FocusRequester? = null,
     showProgress: Boolean = true,
 ) {
@@ -380,7 +381,7 @@ private fun ContinueWatchingGridRow(
             ContinueWatchingCard(
                 item,
                 repo,
-                { id -> onOpenItem(id, item.libraryId) },
+                { onOpenItem(item) },
                 modifier = Modifier.weight(1f),
                 focusRequester = if (index == 0) firstItemFocusRequester else null,
                 showProgress = showProgress,
