@@ -23,6 +23,7 @@
     <string name="home_continue_watching">Continue watching</string>
     <string name="home_up_next">Up next</string>
     <string name="home_see_all">see all (%1$d)</string>
+    <string name="home_open_library">Open %1$s</string>
 
     <!-- Search -->
     <string name="search_voice">Voice search</string>
