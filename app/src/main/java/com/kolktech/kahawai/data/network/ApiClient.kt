@@ -92,8 +92,6 @@ object ApiClient {
 
     fun apiService(): ApiService = authRetrofit().create(ApiService::class.java)
 
-    fun adminApiService(): AdminApiService = authRetrofit().create(AdminApiService::class.java)
-
     fun authenticatedOkHttpClient(): OkHttpClient = authClient()
 
     /// Same auth/refresh pipeline as [authenticatedOkHttpClient] (built via

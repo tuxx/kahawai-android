@@ -10,14 +10,11 @@ import com.kolktech.kahawai.data.network.dto.ItemQueryRequest
 import com.kolktech.kahawai.data.network.dto.LibrarySummary
 import com.kolktech.kahawai.data.network.dto.LoginRequest
 import com.kolktech.kahawai.data.network.dto.LogoutRequest
-import com.kolktech.kahawai.data.network.dto.OkResponse
 import com.kolktech.kahawai.data.network.dto.PrefsResponse
 import com.kolktech.kahawai.data.network.dto.ProgressRequest
-import com.kolktech.kahawai.data.network.dto.ProviderConfiguration
 import com.kolktech.kahawai.data.network.dto.PutPrefRequest
 import com.kolktech.kahawai.data.network.dto.PutPrefResponse
 import com.kolktech.kahawai.data.network.dto.RefreshRequest
-import com.kolktech.kahawai.data.network.dto.SetOpenSubtitlesAccountRequest
 import com.kolktech.kahawai.data.network.dto.FontsResponse
 import com.kolktech.kahawai.data.network.dto.SeekRequest
 import com.kolktech.kahawai.data.network.dto.SubtitleDownloadRequest
@@ -200,27 +197,12 @@ interface ApiService {
     @DELETE("api/v1/playback/sessions/{id}")
     suspend fun endSession(@Path("id") id: String)
 
-    /// Per-user preferences (HUB-33) — audio/subtitle language defaults,
-    /// OpenSubtitles account, bandwidth cap, ASS fallback order. See
-    /// [com.kolktech.kahawai.ui.settings.ServerSettingsScreen].
+    /// Per-user preferences (HUB-33), the ones the hub stores rather than
+    /// this device. See
+    /// [com.kolktech.kahawai.data.repository.PreferencesRepository].
     @GET("api/v1/prefs")
     suspend fun prefs(): PrefsResponse
 
     @PUT("api/v1/prefs")
     suspend fun putPref(@Body body: PutPrefRequest): PutPrefResponse
-
-    /// Per-viewer OpenSubtitles account (HUB-21), sealed in the hub's own
-    /// credential store (kahawai commit 7835630, "Seal viewer OpenSubtitles
-    /// accounts"). Replaced the old `opensubtitles.username`/`.password`
-    /// generic prefs, which the hub no longer reads at all.
-    @GET("api/v1/account/opensubtitles")
-    suspend fun openSubtitlesAccount(): ProviderConfiguration
-
-    /// Both fields required; empty either side is a 400. Replaces whatever
-    /// account was previously attached.
-    @POST("api/v1/account/opensubtitles")
-    suspend fun setOpenSubtitlesAccount(@Body body: SetOpenSubtitlesAccountRequest): OkResponse
-
-    @DELETE("api/v1/account/opensubtitles")
-    suspend fun deleteOpenSubtitlesAccount(): OkResponse
 }
