@@ -58,6 +58,7 @@ import com.kolktech.kahawai.playback.CapabilityProfileBuilder
 import com.kolktech.kahawai.playback.IMAGE_FORMATS
 import com.kolktech.kahawai.playback.PREF_AUDIO
 import com.kolktech.kahawai.playback.SessionKeepalive
+import com.kolktech.kahawai.playback.SessionRecovery
 import com.kolktech.kahawai.playback.langEq
 import com.kolktech.kahawai.playback.needsMediaType
 import com.kolktech.kahawai.playback.rememberedAudioValue
@@ -712,22 +713,7 @@ class PlayerViewModel(
     private var subtitleEpoch: Int = 0
     private var playbackEndedHandled = false
 
-    /// Guards [attemptSessionRecovery] to one retry per failure — reset
-    /// on a successful recovery so a LATER reap (e.g. the device going
-    /// back to sleep for hours again) still gets its own one-shot retry,
-    /// rather than every error after the first going straight to terminal.
-    private var recoveryAttempted = false
-
-    /// True once this playback has reached STATE_READY at least once.
-    /// [attemptSessionRecovery] only spends a retry (and the hub session
-    /// slot that costs) on errors that happen AFTER that — the "hub
-    /// reaped a stale session" scenario the retry exists for. A file
-    /// that errors before ever reaching READY is broken outright (bad
-    /// codec, corrupt source, etc.): retrying it just burns a second
-    /// session on the same unplayable file instead of surfacing the
-    /// error immediately. Never reset once true — it's a property of
-    /// "this media decodes on this device", not of the current session.
-    private var everReachedReady = false
+    private val sessionRecovery = SessionRecovery()
 
     /// The offsetMs value baked into the current MediaItem's sideloaded
     /// VTT configs as `shift_ms` (see textDeliverySubtitleConfigs). When
@@ -805,7 +791,7 @@ class PlayerViewModel(
                         "currentPos=${realPlayer.currentPosition} bufferedPos=${realPlayer.bufferedPosition} " +
                         "playWhenReady=${realPlayer.playWhenReady}",
                 )
-                if (playbackState == Player.STATE_READY) everReachedReady = true
+                if (playbackState == Player.STATE_READY) sessionRecovery.onReady()
                 if (playbackState == Player.STATE_ENDED) handlePlaybackEnded()
                 updatePausedState()
             }
@@ -1068,7 +1054,7 @@ class PlayerViewModel(
     /// minus the picker-revert bookkeeping that only applies to a
     /// user-driven subtitle switch.
     ///
-    /// [everReachedReady] gates that retry: an error that arrives before
+    /// [sessionRecovery] gates that retry: an error that arrives before
     /// playback ever got going is a broken/unplayable file, not a reaped
     /// session — retrying would just start a SECOND session against the
     /// same file, which fails the exact same way while also eating one
@@ -1078,13 +1064,12 @@ class PlayerViewModel(
     /// hub's reaper — that's what was filling up the session limit.
     private fun attemptSessionRecovery(error: PlaybackException) {
         val failedSession = session
-        if (recoveryAttempted || failedSession == null || !everReachedReady) {
+        if (failedSession == null || !sessionRecovery.tryBegin()) {
             progressJob?.cancel()
             _state.value = PlayerState.Error(getApplication<Application>().getString(R.string.player_playback_failed, error.readableMessage()))
             endSessionBestEffort(failedSession?.sessionId)
             return
         }
-        recoveryAttempted = true
         val positionMs = offsetMs + realPlayer.currentPosition
         Log.w(TAG, "attempting session recovery item=$itemId oldSessionId=${failedSession.sessionId} positionMs=$positionMs")
         viewModelScope.launch {
@@ -1092,8 +1077,7 @@ class PlayerViewModel(
                 val profile = CapabilityProfileBuilder.build(getApplication())
                 val newSession = startSessionAndAttach(profile, positionMs, burnPickOrNull(_selectedSubtitleTrack.value))
                 _state.value = PlayerState.Ready
-                recoveryAttempted = false
-                Log.w(TAG, "session recovery succeeded item=$itemId newSessionId=${newSession.sessionId}")
+                Log.w(TAG, "replacement session attached item=$itemId newSessionId=${newSession.sessionId}; awaiting playback READY")
                 endSessionBestEffort(failedSession.sessionId)
             } catch (e: Exception) {
                 Log.e(TAG, "session recovery failed item=$itemId", e)
