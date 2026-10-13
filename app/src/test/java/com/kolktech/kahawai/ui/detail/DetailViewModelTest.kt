@@ -423,7 +423,7 @@ class DetailViewModelTest {
             assertEquals("absolute1",loaded.children.single().id)
         }
         server.takeRequest();server.takeRequest()
-        assertEquals("/api/v1/catalogue/libraries/lib1/items/show1/children?season=absolute",server.takeRequest().path)
+        assertEquals("/api/v1/catalogue/libraries/lib1/items/show1/seasons/absolute/items",server.takeRequest().path)
     }
 
 }

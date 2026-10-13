@@ -144,8 +144,21 @@ class CatalogRepository(apiProvider: () -> ApiService = { ApiClient.apiService()
     suspend fun children(library: String, id: String, season: String? = null): List<Item> {
         val items = mutableListOf<Item>()
         var offset = 0
+        var legacySeasonRoute = false
         do {
-            val page = api.children(library, id, season = season, offset = offset.takeIf { it > 0 })
+            val page = if (season == null || legacySeasonRoute) {
+                api.children(library, id, season = season, offset = offset.takeIf { it > 0 })
+            } else {
+                try {
+                    api.seasonItems(library, id, season, offset = offset.takeIf { it > 0 })
+                } catch (error: HttpException) {
+                    // Hubs predating the nested route still support the query filter.
+                    // Probe once; later pages stay on the route that actually exists.
+                    if (error.code() != 404 || offset != 0) throw error
+                    legacySeasonRoute = true
+                    api.children(library, id, season = season)
+                }
+            }
             if (page.offset != offset || (page.children.isEmpty() && offset < page.total)) {
                 throw IOException("Incomplete episode page; try again")
             }

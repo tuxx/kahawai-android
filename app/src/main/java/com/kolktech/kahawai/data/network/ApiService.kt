@@ -136,6 +136,15 @@ interface ApiService {
         @Query("offset") offset: Int? = null,
     ): CatalogueChildren
 
+    @GET("api/v1/catalogue/libraries/{library}/items/{id}/seasons/{season}/items")
+    suspend fun seasonItems(
+        @Path("library") library: String,
+        @Path("id") id: String,
+        @Path("season") season: String,
+        @Query("limit") limit: Int? = null,
+        @Query("offset") offset: Int? = null,
+    ): CatalogueChildren
+
     @GET("api/v1/catalogue/libraries/{library}/items/{id}/seasons")
     suspend fun seasons(@Path("library") library: String, @Path("id") id: String): CatalogueSeasons
 

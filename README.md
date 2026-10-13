@@ -50,7 +50,7 @@ entry, D-pad friendly UI).
 - **Catalog**: `data/repository/CatalogRepository.kt` — libraries, items
   (browse/search), item detail, children (episodes/tracks), watch
   progress shown on browse screens. Multi-season shows load complete summaries
-  from `/items/{show}/seasons`, then page `/children?season=…` for the selected
+  from `/items/{show}/seasons`, then page `/seasons/{season}/items` for the selected
   season. Covers use the authenticated hub image cache; specials are `0` and
   unnumbered episodes use `absolute`. Single-season shows keep their flat list.
   Older hubs fall back to child-group summaries and show posters. Season images

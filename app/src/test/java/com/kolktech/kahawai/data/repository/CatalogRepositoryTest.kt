@@ -457,8 +457,31 @@ class CatalogRepositoryTest {
         val children = repository.children("lib1", "show1", season = "2")
         assertEquals(201, children.size)
         assertTrue(children.last().played)
-        assertEquals("/api/v1/catalogue/libraries/lib1/items/show1/children?season=2", server.takeRequest().path)
-        assertEquals("/api/v1/catalogue/libraries/lib1/items/show1/children?season=2&offset=200", server.takeRequest().path)
+        assertEquals("/api/v1/catalogue/libraries/lib1/items/show1/seasons/2/items", server.takeRequest().path)
+        assertEquals("/api/v1/catalogue/libraries/lib1/items/show1/seasons/2/items?offset=200", server.takeRequest().path)
+    }
+
+    @Test
+    fun `old hubs use the legacy season filter without probing every page`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(404))
+        server.enqueue(MockResponse().setBody("""{"children":[{"id":"special1","title":"Special 1","parent_id":"show1","representative_id":"copy","position":{"kind":"episode","season":0,"episode":1}}],"total":2,"offset":0,"limit":1}"""))
+        server.enqueue(MockResponse().setBody("""{"children":[{"id":"special2","title":"Special 2","parent_id":"show1","representative_id":"copy","position":{"kind":"episode","season":0,"episode":2}}],"total":2,"offset":1,"limit":1}"""))
+        assertEquals(2, repository.children("lib1", "show1", season = "0").size)
+        assertEquals("/api/v1/catalogue/libraries/lib1/items/show1/seasons/0/items", server.takeRequest().path)
+        assertEquals("/api/v1/catalogue/libraries/lib1/items/show1/children?season=0", server.takeRequest().path)
+        assertEquals("/api/v1/catalogue/libraries/lib1/items/show1/children?season=0&offset=1", server.takeRequest().path)
+    }
+
+    @Test
+    fun `season item authentication failures do not fall back`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(401))
+        try {
+            repository.children("lib1", "show1", season = "1")
+            error("Expected authentication failure")
+        } catch (error: HttpException) {
+            assertEquals(401, error.code())
+        }
+        assertEquals(1, server.requestCount)
     }
 
     @Test
@@ -468,7 +491,7 @@ class CatalogRepositoryTest {
             repository.children("lib1", "show1", season = "absolute")
             error("Expected incomplete page failure")
         } catch (_: java.io.IOException) { }
-        assertEquals("/api/v1/catalogue/libraries/lib1/items/show1/children?season=absolute", server.takeRequest().path)
+        assertEquals("/api/v1/catalogue/libraries/lib1/items/show1/seasons/absolute/items", server.takeRequest().path)
     }
 
     @Test
