@@ -4,6 +4,9 @@ import com.kolktech.kahawai.data.network.ApiClient
 import com.kolktech.kahawai.data.network.ApiService
 import com.kolktech.kahawai.data.network.apiJson
 import com.kolktech.kahawai.data.network.isAuthError
+import com.kolktech.kahawai.data.network.dto.CatalogueChildGroup
+import retrofit2.HttpException
+import java.io.IOException
 import com.kolktech.kahawai.data.network.dto.CapabilityProfile
 import com.kolktech.kahawai.data.network.dto.Item
 import com.kolktech.kahawai.data.network.dto.ItemDetail
@@ -138,10 +141,29 @@ class CatalogRepository(apiProvider: () -> ApiService = { ApiClient.apiService()
 
     /// Episodes of a series / tracks of an album. Watch state arrives
     /// alongside the children rather than on them, and is folded in here.
-    suspend fun children(library: String, id: String): List<Item> =
-        api.children(library, id).let { page ->
-            page.children.map { it.toItem(library, page.watch[it.id]) }
-        }
+    suspend fun children(library: String, id: String, season: String? = null): List<Item> {
+        val items = mutableListOf<Item>()
+        var offset = 0
+        do {
+            val page = api.children(library, id, season = season, offset = offset.takeIf { it > 0 })
+            if (page.offset != offset || (page.children.isEmpty() && offset < page.total)) {
+                throw IOException("Incomplete episode page; try again")
+            }
+            items += page.children.map { it.toItem(library, page.watch[it.id]) }
+            offset += page.children.size
+        } while (offset < page.total)
+        return items
+    }
+
+    /// Older hubs expose the same summaries beside their child pages. Only
+    /// a missing route qualifies for fallback; authentication and server
+    /// failures remain errors rather than silently empty season grids.
+    suspend fun seasons(library: String, id: String): List<CatalogueChildGroup> = try {
+        api.seasons(library, id).seasons
+    } catch (error: HttpException) {
+        if (error.code() != 404) throw error
+        api.children(library, id, limit = 1).groups.filter { it.kind == "episode" }
+    }
 
     /// The episode after [id] in the same series, or null at the end of it
     /// — which the hub answers with a JSON `null` body on a 200, not a 404.
@@ -187,6 +209,10 @@ class CatalogRepository(apiProvider: () -> ApiService = { ApiClient.apiService()
     /// null falls through to Coil as "no image" rather than crashing the
     /// screen that's still on-screen while the server gets unconfigured
     /// (e.g. mid "change server" navigation).
+    /// Null identifies the absolute-numbered group, not an omitted selector.
+    fun seasonArtworkUrl(libraryId: String, id: String, season: Int?, size: String? = "card"): String? =
+        artworkUrl(libraryId, id, size)?.let { "$it${if (size == null) "?" else "&"}season=${season ?: "absolute"}" }
+
     fun artworkUrl(libraryId: String, id: String, size: String? = null): String? {
         val base = ApiClient.baseUrlOrNull() ?: return null
         val query = size?.let { "?size=$it" }.orEmpty()

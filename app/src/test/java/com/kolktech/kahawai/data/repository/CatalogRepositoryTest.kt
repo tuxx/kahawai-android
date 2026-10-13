@@ -407,4 +407,81 @@ class CatalogRepositoryTest {
             unmockkObject(ApiClient)
         }
     }
+    @Test
+    fun `season summaries retain artwork and old hubs use complete child groups`() = runTest {
+        server.enqueue(MockResponse().setBody("""{"seasons":[
+            {"kind":"episode","number":0,"total":3,"played":1,"metadata":{"description":{"artwork":["https://example/season.jpg"]},"provenance":{"artwork":"record"}}},
+            {"kind":"episode","number":null,"total":800,"played":10}
+        ]}"""))
+        val groups = repository.seasons("lib1", "show1")
+        assertEquals(listOf(0, null), groups.map { it.number })
+        assertEquals("https://example/season.jpg", groups[0].metadata?.description?.artwork?.single())
+        assertNull(groups[1].metadata)
+        assertEquals("/api/v1/catalogue/libraries/lib1/items/show1/seasons", server.takeRequest().path)
+        server.enqueue(MockResponse().setResponseCode(404))
+        server.enqueue(MockResponse().setBody("""{"children":[],"groups":[
+            {"kind":"episode","number":1,"total":300,"played":2},
+            {"kind":"episode","number":2,"total":24},
+            {"kind":"track","number":1,"total":9}
+        ],"total":324,"limit":1,"offset":0}"""))
+        val old = repository.seasons("lib1", "show1")
+        assertEquals(listOf(1, 2), old.map { it.number })
+        assertEquals(300, old[0].total)
+        assertNull(old[0].metadata)
+        server.takeRequest()
+        assertEquals("/api/v1/catalogue/libraries/lib1/items/show1/children?limit=1", server.takeRequest().path)
+    }
+
+    @Test
+    fun `season authentication errors do not fall back`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(401))
+        try {
+            repository.seasons("lib1", "show1")
+            error("Expected authentication failure")
+        } catch (error: HttpException) {
+            assertEquals(401, error.code())
+        }
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun `season children page beyond 200 and retain each page's watch state`() = runTest {
+        fun page(offset: Int, count: Int): String {
+            val rows = (offset until offset + count).joinToString(",") { index ->
+                """{"id":"child$index","parent_id":"show1","representative_id":"copy","title":"Episode $index", "position":{"kind":"episode","season":2,"episode":${index+1}}}"""
+            }
+            return """{"children":[$rows],"total":201,"limit":200,"offset":$offset,"watch":{"child200":{"played":true}}}"""
+        }
+        server.enqueue(MockResponse().setBody(page(0, 200)))
+        server.enqueue(MockResponse().setBody(page(200, 1)))
+        val children = repository.children("lib1", "show1", season = "2")
+        assertEquals(201, children.size)
+        assertTrue(children.last().played)
+        assertEquals("/api/v1/catalogue/libraries/lib1/items/show1/children?season=2", server.takeRequest().path)
+        assertEquals("/api/v1/catalogue/libraries/lib1/items/show1/children?season=2&offset=200", server.takeRequest().path)
+    }
+
+    @Test
+    fun `empty unfinished pages fail instead of silently truncating episodes`() = runTest {
+        server.enqueue(MockResponse().setBody("""{"children":[],"total":250,"offset":0}"""))
+        try {
+            repository.children("lib1", "show1", season = "absolute")
+            error("Expected incomplete page failure")
+        } catch (_: java.io.IOException) { }
+        assertEquals("/api/v1/catalogue/libraries/lib1/items/show1/children?season=absolute", server.takeRequest().path)
+    }
+
+    @Test
+    fun `season artwork distinguishes specials and absolute and tolerates no server`() {
+        mockkObject(ApiClient)
+        try {
+            every { ApiClient.baseUrlOrNull() } returns "https://hub/"
+            assertEquals("https://hub/api/v1/catalogue/libraries/lib1/items/show1/artwork?size=card&season=0", repository.seasonArtworkUrl("lib1", "show1", 0))
+            assertEquals("https://hub/api/v1/catalogue/libraries/lib1/items/show1/artwork?size=card&season=absolute", repository.seasonArtworkUrl("lib1", "show1", null))
+            assertEquals("https://hub/api/v1/catalogue/libraries/lib1/items/show1/artwork?season=2", repository.seasonArtworkUrl("lib1", "show1", 2, size = null))
+            every { ApiClient.baseUrlOrNull() } returns null
+            assertNull(repository.seasonArtworkUrl("lib1", "show1", 2))
+        } finally { unmockkObject(ApiClient) }
+    }
+
 }

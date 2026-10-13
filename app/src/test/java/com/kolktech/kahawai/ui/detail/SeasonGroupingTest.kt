@@ -38,4 +38,12 @@ class SeasonGroupingTest {
 
         assertTrue(groupSeasons(listOf(track, track.copy(id = "t2"))).isEmpty())
     }
+    @Test
+    fun `server groups include seasons beyond the loaded episode page`() {
+        val groups = listOf(
+            com.kolktech.kahawai.data.network.dto.CatalogueChildGroup("episode",1,250,20),
+            com.kolktech.kahawai.data.network.dto.CatalogueChildGroup("episode",2,20,5),
+        )
+        assertEquals(groups,seasonGroups(groups,emptyList()))
+    }
 }

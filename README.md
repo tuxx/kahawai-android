@@ -49,7 +49,12 @@ entry, D-pad friendly UI).
   key.
 - **Catalog**: `data/repository/CatalogRepository.kt` — libraries, items
   (browse/search), item detail, children (episodes/tracks), watch
-  progress shown on browse screens.
+  progress shown on browse screens. Multi-season shows load complete summaries
+  from `/items/{show}/seasons`, then page `/children?season=…` for the selected
+  season. Covers use the authenticated hub image cache; specials are `0` and
+  unnumbered episodes use `absolute`. Single-season shows keep their flat list.
+  Older hubs fall back to child-group summaries and show posters. Season images
+  refresh on page entry so artwork arriving after a backfill becomes visible.
 - **Playback**: `playback/CapabilityProfileBuilder.kt` probes the
   device's actual decoders (`MediaCodecList`) rather than hardcoding a
   claim. `ui/player/PlayerViewModel.kt` owns the session lifecycle:
