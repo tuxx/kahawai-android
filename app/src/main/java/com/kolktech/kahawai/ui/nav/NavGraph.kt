@@ -244,10 +244,19 @@ fun KahawaiNavGraph(app: KahawaiApp, modifier: Modifier = Modifier) {
                 repo = catalogRepository,
                 onOpenItem = { itemId, libraryId -> navController.navigate(Routes.detail(itemId, libraryId)) },
                 // Continue-watching and up-next cards. Stacks an episode's
-                // series under it, so "back" from the episode lands on the
-                // series screen rather than straight back on Home.
+                // series and season under it, so "back" from the episode
+                // lands on its season's list, and back again on the series
+                // screen, rather than straight back on Home. Whether the
+                // series has seasons to choose between isn't known from
+                // here; a season page that turns out to be redundant steps
+                // aside by itself (see DetailScreen).
                 onOpenFeedItem = { item ->
-                    item.parentId?.let { navController.navigate(Routes.detail(it, item.libraryId)) }
+                    item.parentId?.let { parentId ->
+                        navController.navigate(Routes.detail(parentId, item.libraryId))
+                        if (item.kind == "episode") {
+                            navController.navigate(Routes.season(parentId, item.libraryId, item.season))
+                        }
+                    }
                     navController.navigate(Routes.detail(item.id, item.libraryId))
                 },
                 onOpenLibrary = { id, name -> navController.navigate(Routes.library(id, name)) },

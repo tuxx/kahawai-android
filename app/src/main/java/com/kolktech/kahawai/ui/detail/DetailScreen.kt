@@ -184,6 +184,16 @@ fun DetailScreen(
                 onRetry = { viewModel.load() },
                 onSignInAgain = onSessionExpired,
             )
+            // A season page stacked under a home feed episode (see
+            // NavGraph's onOpenFeedItem) before anyone knew the show keeps
+            // a flat list: it would be a copy of the show's own page, so
+            // it hands straight back to that one instead of drawing.
+            is DetailState.Loaded if season != null && groupSeasons(s.children).isEmpty() -> {
+                LaunchedEffect(Unit) { onBack() }
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            }
             is DetailState.Loaded -> {
                 // A show/album has no Play button, so without this,
                 // nothing on the page is ever focused and D-pad
