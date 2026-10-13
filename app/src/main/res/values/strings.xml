@@ -40,6 +40,13 @@
     <string name="detail_chapter_numbered">Chapter %1$d</string>
     <string name="detail_mark_watched">Mark watched</string>
     <string name="detail_mark_unwatched">Mark unwatched</string>
+    <string name="detail_season">Season %1$d</string>
+    <string name="detail_season_specials">Specials</string>
+    <string name="detail_season_other">Other episodes</string>
+    <plurals name="detail_season_episodes">
+        <item quantity="one">%1$d episode</item>
+        <item quantity="other">%1$d episodes</item>
+    </plurals>
     <string name="resume_at">Resume at %1$s</string>
     <string name="resume_at_percent">Resume at %1$s (%2$d%%)</string>
     <string name="runtime_hours_minutes">%1$dh %2$dm</string>

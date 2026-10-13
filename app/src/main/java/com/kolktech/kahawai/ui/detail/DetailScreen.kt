@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -23,6 +24,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -55,6 +57,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -76,6 +79,7 @@ import com.kolktech.kahawai.data.network.dto.displayLabel
 import com.kolktech.kahawai.data.repository.CatalogRepository
 import com.kolktech.kahawai.ui.components.ErrorView
 import com.kolktech.kahawai.ui.components.OnResumeEffect
+import com.kolktech.kahawai.ui.components.PosterCard
 import com.kolktech.kahawai.ui.components.WatchProgressBar
 import com.kolktech.kahawai.playback.SourceWork
 import com.kolktech.kahawai.playback.groupSources
@@ -103,6 +107,26 @@ private fun Modifier.dpadFocusBorder(shape: Shape = CircleShape): Modifier {
         )
 }
 
+/// Narrows a show's page to one season. [number] is null for the episodes
+/// that carry no season number at all.
+data class SeasonFilter(val number: Int?)
+
+/// One season box on a show's page.
+private data class SeasonGroup(val number: Int?, val total: Int, val played: Int)
+
+/// The seasons to offer as boxes, in the order the hub listed their
+/// episodes — or none when there is nothing to choose between: a
+/// single-season show (and an album, whose tracks carry no season) keeps
+/// its flat list rather than hiding it behind one lone box.
+internal fun groupSeasons(children: List<Item>): List<Pair<Int?, List<Item>>> =
+    children.filter { it.kind == "episode" }
+        .groupBy { it.season }
+        .takeIf { it.size > 1 }
+        ?.toList()
+        .orEmpty()
+
+private val SEASON_CARD_MIN_WIDTH = 110.dp
+
 @Composable
 fun DetailScreen(
     itemId: String,
@@ -110,8 +134,12 @@ fun DetailScreen(
     /// own detail names no library, and its media type is what the
     /// account's track preferences are keyed by (see TrackChoice).
     libraryId: String,
+    /// Set when this is one season's episode list rather than the show's
+    /// own page — the same screen, a level further in.
+    season: SeasonFilter?,
     repo: CatalogRepository,
     onOpenItem: (itemId: String, libraryId: String) -> Unit,
+    onOpenSeason: (season: Int?) -> Unit,
     onPlay: (itemId: String, startMs: Long, audioTrack: Int, subtitleTrackId: Long?, prefetch: PlaybackPrefetch) -> Unit,
     onBack: () -> Unit,
     onSessionExpired: () -> Unit,
@@ -165,17 +193,36 @@ fun DetailScreen(
                 // directly from here — but the first episode row is a
                 // later lazy item that may not exist yet at this point,
                 // so ChildRow requests its own focus once it's actually
-                // composed (see its focusRequester handling) instead.
+                // composed (see its focusRequester handling) instead. The
+                // same goes for the first season box.
+                //
+                // A multi-season show lists its seasons as boxes here and
+                // leaves the episodes to each season's own page.
+                val seasons = if (season == null) {
+                    groupSeasons(s.children).map { (number, episodes) ->
+                        SeasonGroup(number, episodes.size, episodes.count { it.played })
+                    }
+                } else {
+                    emptyList()
+                }
+                val children = when {
+                    season != null -> s.children.filter { it.season == season.number }
+                    seasons.isNotEmpty() -> emptyList()
+                    else -> s.children
+                }
                 if (s.detail.kind !in NOT_DIRECTLY_PLAYABLE) {
                     LaunchedEffect(Unit) { playButtonFocusRequester.requestFocus() }
-                } else if (s.children.isEmpty()) {
+                } else if (children.isEmpty() && seasons.isEmpty()) {
                     LaunchedEffect(Unit) { backButtonFocusRequester.requestFocus() }
                 }
                 DetailContent(
                     state = s,
-                    libraryId = libraryId,
+                    children = children,
+                    seasons = seasons,
+                    seasonLabel = season?.let { seasonLabel(it.number) },
                     repo = repo,
                     onOpenItem = onOpenItem,
+                    onOpenSeason = onOpenSeason,
                     onPlay = onPlay,
                     onSelectAudioTrack = viewModel::selectAudioTrackIndex,
                     onSelectSource = viewModel::selectSource,
@@ -217,9 +264,12 @@ fun DetailScreen(
 @Composable
 private fun DetailContent(
     state: DetailState.Loaded,
-    libraryId: String,
+    children: List<Item>,
+    seasons: List<SeasonGroup>,
+    seasonLabel: String?,
     repo: CatalogRepository,
     onOpenItem: (itemId: String, libraryId: String) -> Unit,
+    onOpenSeason: (season: Int?) -> Unit,
     onPlay: (itemId: String, startMs: Long, audioTrack: Int, subtitleTrackId: Long?, prefetch: PlaybackPrefetch) -> Unit,
     onSelectAudioTrack: (Int) -> Unit,
     onSelectSource: (Int?) -> Unit,
@@ -229,7 +279,6 @@ private fun DetailContent(
     firstChildFocusRequester: FocusRequester,
 ) {
     val detail = state.detail
-    val children = state.children
     // Window size class rather than orientation: a portrait tablet or
     // unfolded foldable (medium+ width) has room for the side-by-side
     // layout even though it's "portrait", and a landscape phone (compact
@@ -286,6 +335,7 @@ private fun DetailContent(
                     item {
                         DetailInfo(
                             detail = detail,
+                            seasonLabel = seasonLabel,
                             audioTracks = audioTracks,
                             videoStream = videoStream,
                             runtimeMs = runtimeMs,
@@ -303,6 +353,17 @@ private fun DetailContent(
                             watchedActionInFlight = state.watchedActionInFlight,
                             playButtonFocusRequester = playButtonFocusRequester,
                         )
+                    }
+                    if (seasons.isNotEmpty()) {
+                        item {
+                            SeasonGrid(
+                                seasons = seasons,
+                                artworkModel = repo.artworkUrl(detail.libraryId, detail.id, "card"),
+                                onOpenSeason = onOpenSeason,
+                                firstFocusRequester = firstChildFocusRequester,
+                                modifier = Modifier.padding(top = 16.dp),
+                            )
+                        }
                     }
                     if (children.isNotEmpty()) {
                         itemsIndexed(children, key = { _, child -> child.id }) { index, child ->
@@ -344,6 +405,7 @@ private fun DetailContent(
                     Column(modifier = Modifier.padding(16.dp)) {
                         DetailInfo(
                             detail = detail,
+                            seasonLabel = seasonLabel,
                             audioTracks = audioTracks,
                             videoStream = videoStream,
                             runtimeMs = runtimeMs,
@@ -364,6 +426,17 @@ private fun DetailContent(
                     }
                 }
             }
+            if (seasons.isNotEmpty()) {
+                item {
+                    SeasonGrid(
+                        seasons = seasons,
+                        artworkModel = repo.artworkUrl(detail.libraryId, detail.id, "card"),
+                        onOpenSeason = onOpenSeason,
+                        firstFocusRequester = firstChildFocusRequester,
+                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                    )
+                }
+            }
             if (children.isNotEmpty()) {
                 itemsIndexed(children, key = { _, child -> child.id }) { index, child ->
                     ChildRow(
@@ -381,6 +454,7 @@ private fun DetailContent(
 @Composable
 private fun DetailInfo(
     detail: ItemDetail,
+    seasonLabel: String?,
     audioTracks: List<ClientAudioStream>,
     videoStream: ClientVideoStream?,
     runtimeMs: Long?,
@@ -401,6 +475,7 @@ private fun DetailInfo(
     Text(detail.title, style = MaterialTheme.typography.headlineSmall)
     val meta = listOfNotNull(
         detail.year?.toString(),
+        seasonLabel,
         detail.season?.let { "S$it" }
             ?.plus(detail.episode?.let { "E$it" } ?: ""),
         detail.parentTitle,
@@ -819,6 +894,56 @@ private fun ResumeLine(detail: ItemDetail) {
     }
     text?.let {
         Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 4.dp))
+    }
+}
+
+@Composable
+private fun seasonLabel(number: Int?): String = when (number) {
+    null -> stringResource(R.string.detail_season_other)
+    0 -> stringResource(R.string.detail_season_specials)
+    else -> stringResource(R.string.detail_season, number)
+}
+
+/// The show's seasons as poster boxes, laid out like the library grid. Rows
+/// are chunked by hand rather than a LazyVerticalGrid because this sits
+/// inside the page's own LazyColumn, and there are only ever a handful.
+/// Every box wears the show's poster: a season has no artwork of its own.
+@Composable
+private fun SeasonGrid(
+    seasons: List<SeasonGroup>,
+    artworkModel: Any?,
+    onOpenSeason: (season: Int?) -> Unit,
+    firstFocusRequester: FocusRequester,
+    modifier: Modifier = Modifier,
+) {
+    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
+        val columns = (maxWidth / SEASON_CARD_MIN_WIDTH).toInt().coerceAtLeast(1)
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            seasons.chunked(columns).forEachIndexed { rowIndex, row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    row.forEachIndexed { index, season ->
+                        PosterCard(
+                            artworkModel = artworkModel,
+                            title = seasonLabel(season.number),
+                            subtitle = if (season.played == season.total) {
+                                stringResource(R.string.watched)
+                            } else {
+                                pluralStringResource(R.plurals.detail_season_episodes, season.total, season.total)
+                            },
+                            icon = Icons.Filled.Tv,
+                            onClick = { onOpenSeason(season.number) },
+                            modifier = Modifier.weight(1f),
+                            focusRequester = if (rowIndex == 0 && index == 0) firstFocusRequester else null,
+                            positionMs = season.played.toLong(),
+                            durationMs = season.total.toLong(),
+                            played = season.played == season.total,
+                        )
+                    }
+                    // Keeps a short last row's boxes the same width as the rest.
+                    repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
+                }
+            }
+        }
     }
 }
 

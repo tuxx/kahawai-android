@@ -30,6 +30,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -53,6 +54,37 @@ fun PosterCard(
     modifier: Modifier = Modifier,
     focusRequester: FocusRequester? = null,
 ) {
+    PosterCard(
+        artworkModel = repo.artworkUrl(item.libraryId, item.id, "card"),
+        title = item.title,
+        subtitle = item.year?.toString(),
+        icon = if (item.kind == "movie") Icons.Filled.Movie else Icons.Filled.Tv,
+        onClick = { onClick(item.id) },
+        modifier = modifier,
+        focusRequester = focusRequester,
+        positionMs = item.resumePositionMs,
+        durationMs = item.resumeDurationMs,
+        played = item.played,
+    )
+}
+
+/// The card itself, for a box that isn't a catalogue [Item] of its own — a
+/// season has no id the hub would serve artwork or watch state for, so its
+/// caller supplies both. The progress line is a plain fraction, so a count
+/// (episodes watched of episodes total) fits it as well as milliseconds do.
+@Composable
+fun PosterCard(
+    artworkModel: Any?,
+    title: String,
+    subtitle: String?,
+    icon: ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    focusRequester: FocusRequester? = null,
+    positionMs: Long? = null,
+    durationMs: Long? = null,
+    played: Boolean = false,
+) {
     // D-pad navigation has no hover/pressed state to lean on, so the
     // poster needs its own clearly visible affordance on focus — a scale
     // pop plus the hub's own mint-teal accent border, matching the
@@ -73,7 +105,7 @@ fun PosterCard(
             .fillMaxWidth()
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .onFocusChanged { focused = it.isFocused }
-            .clickable { onClick(item.id) },
+            .clickable(onClick = onClick),
     ) {
         Box(
             modifier = Modifier
@@ -89,8 +121,8 @@ fun PosterCard(
                 ),
         ) {
             AsyncImage(
-                model = repo.artworkUrl(item.libraryId, item.id, "card"),
-                contentDescription = item.title,
+                model = artworkModel,
+                contentDescription = title,
                 contentScale = ContentScale.Crop,
                 // No local cover, unmatched metadata, or a transient fetch
                 // failure all land here (the hub 404s rather than erroring) —
@@ -108,7 +140,7 @@ fun PosterCard(
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    imageVector = if (item.kind == "movie") Icons.Filled.Movie else Icons.Filled.Tv,
+                    imageVector = icon,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(14.dp),
@@ -117,14 +149,14 @@ fun PosterCard(
             // Sits inside the clipped Box so the line follows the card's
             // rounded bottom corners.
             WatchProgressBar(
-                positionMs = item.resumePositionMs,
-                durationMs = item.resumeDurationMs,
-                played = item.played,
+                positionMs = positionMs,
+                durationMs = durationMs,
+                played = played,
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
         }
         Text(
-            item.title,
+            title,
             style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.SemiBold,
             color = if (focused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
@@ -132,9 +164,9 @@ fun PosterCard(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(top = 6.dp),
         )
-        item.year?.let {
+        subtitle?.let {
             Text(
-                it.toString(),
+                it,
                 style = MaterialTheme.typography.labelSmall,
                 color = KahawaiOnSurfaceVariant,
                 maxLines = 1,

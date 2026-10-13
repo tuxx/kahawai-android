@@ -38,6 +38,7 @@ import com.kolktech.kahawai.data.network.apiJson
 import com.kolktech.kahawai.data.repository.AuthRepository
 import com.kolktech.kahawai.data.repository.CatalogRepository
 import com.kolktech.kahawai.ui.detail.DetailScreen
+import com.kolktech.kahawai.ui.detail.SeasonFilter
 import com.kolktech.kahawai.ui.home.HomeScreen
 import com.kolktech.kahawai.ui.library.LibraryScreen
 import com.kolktech.kahawai.ui.login.LoginScreen
@@ -69,7 +70,7 @@ private object Routes {
     const val SETTINGS = "settings"
     const val SETTINGS_PLAYER_SEEKING = "settings_player_seeking"
     const val LIBRARY = "library/{libraryId}?name={name}"
-    const val DETAIL = "detail/{itemId}?library={library}"
+    const val DETAIL = "detail/{itemId}?library={library}&season={season}"
     const val PLAYER =
         "player/{itemId}?startMs={startMs}&audioTrack={audioTrack}&subtitleTrack={subtitleTrack}" +
             "&library={library}&prefetch={prefetch}"
@@ -80,6 +81,13 @@ private object Routes {
     /// can serve. It is also the only route to the media type the
     /// account's track preferences are keyed by (see TrackChoice).
     fun detail(itemId: String, libraryId: String) = "detail/$itemId?library=$libraryId"
+    /// A show's page narrowed to one season's episodes. [season] is null
+    /// for the episodes that carry no season number, which is why the
+    /// argument is a string: "no season number" and "not narrowed at all"
+    /// (the argument left off, see [detail]) are different pages.
+    fun season(itemId: String, libraryId: String, season: Int?) =
+        "detail/$itemId?library=$libraryId&season=${season ?: UNNUMBERED_SEASON}"
+    const val UNNUMBERED_SEASON = "none"
     /// [prefetch] rides along only from a Detail-screen Play press, which
     /// already ran the QUERY this saves the player from repeating (see
     /// PlaybackPrefetch) — null for auto-advance/"<"/">, which have no
@@ -300,15 +308,21 @@ fun KahawaiNavGraph(app: KahawaiApp, modifier: Modifier = Modifier) {
             arguments = listOf(
                 navArgument("itemId") { type = NavType.StringType },
                 navArgument("library") { type = NavType.StringType; defaultValue = "" },
+                navArgument("season") { type = NavType.StringType; nullable = true; defaultValue = null },
             ),
         ) { backStackEntry ->
             val itemId = backStackEntry.arguments?.getString("itemId") ?: return@composable
             val libraryId = backStackEntry.arguments?.getString("library")
                 ?.takeIf { it.isNotEmpty() } ?: return@composable
+            val season = backStackEntry.arguments?.getString("season")?.let {
+                SeasonFilter(if (it == Routes.UNNUMBERED_SEASON) null else it.toIntOrNull() ?: return@composable)
+            }
             DetailScreen(
                 itemId = itemId,
                 libraryId = libraryId,
+                season = season,
                 repo = catalogRepository,
+                onOpenSeason = { number -> navController.navigate(Routes.season(itemId, libraryId, number)) },
                 onOpenItem = { childId, childLibraryId -> navController.navigate(Routes.detail(childId, childLibraryId)) },
                 onPlay = { playId, startMs, audioTrack, subtitleTrackId, prefetch ->
                     navController.navigate(Routes.player(playId, startMs, audioTrack, subtitleTrackId, libraryId, prefetch))
