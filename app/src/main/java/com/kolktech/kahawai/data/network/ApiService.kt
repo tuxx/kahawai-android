@@ -2,6 +2,7 @@ package com.kolktech.kahawai.data.network
 
 import com.kolktech.kahawai.data.network.dto.BootstrapResponse
 import com.kolktech.kahawai.data.network.dto.CatalogueArtists
+import com.kolktech.kahawai.data.network.dto.CatalogueSeasons
 import com.kolktech.kahawai.data.network.dto.CatalogueChildren
 import com.kolktech.kahawai.data.network.dto.CatalogueDetail
 import com.kolktech.kahawai.data.network.dto.CatalogueItems
@@ -129,11 +130,23 @@ interface ApiService {
     suspend fun children(
         @Path("library") library: String,
         @Path("id") id: String,
-        @Query("season") season: Int? = null,
+        @Query("season") season: String? = null,
         @Query("disc") disc: Int? = null,
         @Query("limit") limit: Int? = null,
         @Query("offset") offset: Int? = null,
     ): CatalogueChildren
+
+    @GET("api/v1/catalogue/libraries/{library}/items/{id}/seasons/{season}/items")
+    suspend fun seasonItems(
+        @Path("library") library: String,
+        @Path("id") id: String,
+        @Path("season") season: String,
+        @Query("limit") limit: Int? = null,
+        @Query("offset") offset: Int? = null,
+    ): CatalogueChildren
+
+    @GET("api/v1/catalogue/libraries/{library}/items/{id}/seasons")
+    suspend fun seasons(@Path("library") library: String, @Path("id") id: String): CatalogueSeasons
 
     /// The next episode after this one, within the same library. The end of
     /// a series answers with a JSON `null` body on a 200, not a 404 — and
