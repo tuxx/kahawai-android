@@ -9,6 +9,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
+import com.kolktech.kahawai.data.network.dto.CatalogueChildGroup
 import com.kolktech.kahawai.data.network.dto.Item
 import com.kolktech.kahawai.data.network.dto.ItemDetail
 import com.kolktech.kahawai.data.network.dto.Pref
@@ -41,6 +42,7 @@ sealed interface DetailState {
     data class Loaded(
         val detail: ItemDetail,
         val children: List<Item>,
+        val seasons: List<CatalogueChildGroup> = emptyList(),
         val subtitleTracks: List<SubtitleTrack> = emptyList(),
         val selectedSubtitleTrack: SubtitleTrack? = null,
         val selectedAudioTrackIndex: Int = 0,
@@ -72,6 +74,7 @@ class DetailViewModel(
     /// media type the account's track lists are keyed by (see TrackChoice).
     private val libraryId: String,
     private val prefsRepo: PreferencesRepository = PreferencesRepository(),
+    private val season: SeasonFilter? = null,
 ) : AndroidViewModel(application) {
     /// The scope a subtitle pick is remembered under (HUB-33): the show, so
     /// every episode of it opens the same way. Known once the item loads.
@@ -111,6 +114,17 @@ class DetailViewModel(
 
     init {
         load()
+    }
+
+    private suspend fun loadContainer(detail: ItemDetail): Pair<List<CatalogueChildGroup>, List<Item>> {
+        val seasons = if (detail.kind == "show") repo.seasons(libraryId, itemId) else emptyList()
+        val showGrid = detail.kind == "show" && seasons.size > 1 && season == null
+        val children = if (detail.kind in NOT_DIRECTLY_PLAYABLE && !showGrid) {
+            repo.children(libraryId, itemId, season = season?.let { it.number?.toString() ?: "absolute" })
+        } else {
+            emptyList()
+        }
+        return seasons to children
     }
 
     fun load() {
@@ -160,11 +174,7 @@ class DetailViewModel(
                 )
                 val detail = choice.item
                 if (pinnedSourceId == null) automaticSourceId = choice.sourceId
-                val children = if (detail.kind in NOT_DIRECTLY_PLAYABLE) {
-                    repo.children(libraryId, itemId)
-                } else {
-                    emptyList()
-                }
+                val (seasons, children) = loadContainer(detail)
                 val subtitleTracks = detail.negotiated?.subtitles ?: emptyList()
                 sourceScope = sourcePreferenceScope(detail.sources, choice.sourceId)
                 // What this title is remembered as being watched with, so the
@@ -182,6 +192,7 @@ class DetailViewModel(
                 _state.value = DetailState.Loaded(
                     detail = detail,
                     children = children,
+                    seasons = seasons,
                     subtitleTracks = subtitleTracks,
                     selectedSubtitleTrack = selected,
                     selectedAudioTrackIndex = choice.audioTrack,
@@ -278,16 +289,13 @@ class DetailViewModel(
                 )
                 val detail = choice.item
                 if (pinnedSourceId == null) automaticSourceId = choice.sourceId
-                val children = if (detail.kind in NOT_DIRECTLY_PLAYABLE) {
-                    repo.children(libraryId, itemId)
-                } else {
-                    emptyList()
-                }
+                val (seasons, children) = loadContainer(detail)
                 sourceScope = sourcePreferenceScope(detail.sources, choice.sourceId)
                 val current = _state.value as? DetailState.Loaded ?: return@launch
                 _state.value = current.copy(
                     detail = detail,
                     children = children,
+                    seasons = seasons,
                     subtitleTracks = detail.negotiated?.subtitles ?: emptyList(),
                     sourceId = choice.sourceId,
                     automaticSourceId = automaticSourceId,

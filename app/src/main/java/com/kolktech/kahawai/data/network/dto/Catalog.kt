@@ -124,7 +124,11 @@ data class CatalogueChildGroup(
     val number: Int? = null,
     val total: Int = 0,
     val played: Int = 0,
+    val metadata: ResolvedDescription? = null,
 )
+
+@Serializable
+data class CatalogueSeasons(val seasons: List<CatalogueChildGroup> = emptyList())
 
 @Serializable
 data class CatalogueChildren(

@@ -18,6 +18,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import retrofit2.HttpException
+import java.io.IOException
 
 class CatalogRepositoryTest {
 
@@ -403,6 +404,151 @@ class CatalogRepositoryTest {
         every { ApiClient.baseUrlOrNull() } returns null
         try {
             assertNull(repository.artworkUrl("lib1", "i1", size = "card"))
+        } finally {
+            unmockkObject(ApiClient)
+        }
+    }
+
+    @Test
+    fun `season summaries retain artwork and keep only episode groups`() = runTest {
+        server.enqueue(
+            MockResponse().setBody(
+                """{"seasons":[
+                    {"kind":"episode","number":0,"total":3,"played":1,"metadata":{"description":{"artwork":["https://example/season.jpg"]},"provenance":{"artwork":"record"}}},
+                    {"kind":"episode","number":null,"total":800,"played":10},
+                    {"kind":"disc","number":1,"total":12}
+                ]}""",
+            ),
+        )
+
+        val groups = repository.seasons("lib1", "show1")
+
+        assertEquals(listOf(0, null), groups.map { it.number })
+        assertEquals("https://example/season.jpg", groups[0].metadata?.description?.artwork?.single())
+        assertNull(groups[1].metadata)
+        assertEquals("/api/v1/catalogue/libraries/lib1/items/show1/seasons", server.takeRequest().path)
+    }
+
+    @Test
+    fun `old hubs read season summaries from the child groups`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(404))
+        server.enqueue(
+            MockResponse().setBody(
+                """{"children":[],"groups":[
+                    {"kind":"episode","number":1,"total":300,"played":2},
+                    {"kind":"episode","number":2,"total":24},
+                    {"kind":"track","number":1,"total":9}
+                ],"total":324,"limit":1,"offset":0}""",
+            ),
+        )
+
+        val groups = repository.seasons("lib1", "show1")
+
+        assertEquals(listOf(1, 2), groups.map { it.number })
+        assertEquals(300, groups[0].total)
+        assertNull(groups[0].metadata)
+        assertEquals("/api/v1/catalogue/libraries/lib1/items/show1/seasons", server.takeRequest().path)
+        assertEquals("/api/v1/catalogue/libraries/lib1/items/show1/children?limit=1", server.takeRequest().path)
+    }
+
+    @Test
+    fun `season authentication errors do not fall back`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(401))
+
+        val error = assertThrows(HttpException::class.java) {
+            kotlinx.coroutines.runBlocking { repository.seasons("lib1", "show1") }
+        }
+
+        assertEquals(401, error.code())
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun `season children page beyond 200 and retain each page's watch state`() = runTest {
+        fun page(offset: Int, count: Int): String {
+            val rows = (offset until offset + count).joinToString(",") { index ->
+                """{"id":"child$index","parent_id":"show1","representative_id":"copy","title":"Episode $index","position":{"kind":"episode","season":2,"episode":${index + 1}}}"""
+            }
+            return """{"children":[$rows],"total":201,"limit":200,"offset":$offset,"watch":{"child200":{"played":true}}}"""
+        }
+        server.enqueue(MockResponse().setBody(page(0, 200)))
+        server.enqueue(MockResponse().setBody(page(200, 1)))
+
+        val children = repository.children("lib1", "show1", season = "2")
+
+        assertEquals(201, children.size)
+        assertTrue(children.last().played)
+        assertEquals("/api/v1/catalogue/libraries/lib1/items/show1/seasons/2/items", server.takeRequest().path)
+        assertEquals(
+            "/api/v1/catalogue/libraries/lib1/items/show1/seasons/2/items?offset=200",
+            server.takeRequest().path,
+        )
+    }
+
+    @Test
+    fun `old hubs use the legacy season filter without probing every page`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(404))
+        server.enqueue(
+            MockResponse().setBody(
+                """{"children":[{"id":"special1","title":"Special 1","parent_id":"show1","representative_id":"copy","position":{"kind":"episode","season":0,"episode":1}}],"total":2,"offset":0,"limit":1}""",
+            ),
+        )
+        server.enqueue(
+            MockResponse().setBody(
+                """{"children":[{"id":"special2","title":"Special 2","parent_id":"show1","representative_id":"copy","position":{"kind":"episode","season":0,"episode":2}}],"total":2,"offset":1,"limit":1}""",
+            ),
+        )
+
+        assertEquals(2, repository.children("lib1", "show1", season = "0").size)
+
+        assertEquals("/api/v1/catalogue/libraries/lib1/items/show1/seasons/0/items", server.takeRequest().path)
+        assertEquals("/api/v1/catalogue/libraries/lib1/items/show1/children?season=0", server.takeRequest().path)
+        assertEquals(
+            "/api/v1/catalogue/libraries/lib1/items/show1/children?season=0&offset=1",
+            server.takeRequest().path,
+        )
+    }
+
+    @Test
+    fun `season item authentication failures do not fall back`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(401))
+
+        val error = assertThrows(HttpException::class.java) {
+            kotlinx.coroutines.runBlocking { repository.children("lib1", "show1", season = "1") }
+        }
+
+        assertEquals(401, error.code())
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun `empty unfinished pages fail instead of silently truncating episodes`() = runTest {
+        server.enqueue(MockResponse().setBody("""{"children":[],"total":250,"offset":0}"""))
+
+        assertThrows(IOException::class.java) {
+            kotlinx.coroutines.runBlocking { repository.children("lib1", "show1", season = "absolute") }
+        }
+
+        assertEquals("/api/v1/catalogue/libraries/lib1/items/show1/seasons/absolute/items", server.takeRequest().path)
+    }
+
+    @Test
+    fun `artworkUrl selects a season cover alongside or without a size`() {
+        mockkObject(ApiClient)
+        every { ApiClient.baseUrlOrNull() } returns "https://hub/"
+        try {
+            assertEquals(
+                "https://hub/api/v1/catalogue/libraries/lib1/items/show1/artwork?size=card&season=0",
+                repository.artworkUrl("lib1", "show1", size = "card", season = "0"),
+            )
+            assertEquals(
+                "https://hub/api/v1/catalogue/libraries/lib1/items/show1/artwork?size=card&season=absolute",
+                repository.artworkUrl("lib1", "show1", size = "card", season = "absolute"),
+            )
+            assertEquals(
+                "https://hub/api/v1/catalogue/libraries/lib1/items/show1/artwork?season=2",
+                repository.artworkUrl("lib1", "show1", season = "2"),
+            )
         } finally {
             unmockkObject(ApiClient)
         }
