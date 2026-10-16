@@ -224,7 +224,6 @@ class DetailViewModelTest {
             val refreshed = awaitItem() as DetailState.Loaded
             assertEquals("A Show Renamed", refreshed.detail.title)
             assertEquals(2, refreshed.children.size)
-            assertEquals(loaded.artworkGeneration + 1, refreshed.artworkGeneration)
             assertEquals(2, refreshed.selectedAudioTrackIndex)
         }
     }
@@ -385,45 +384,97 @@ class DetailViewModelTest {
             assertEquals(3, next.selectedAudioTrackIndex)
         }
     }
+
     @Test
     fun `multi season parent loads summaries without downloading episodes`() = runTest {
         server.enqueue(MockResponse().setBody(itemJson("show1", "A Show", kind = "series")))
-        server.enqueue(MockResponse().setBody("""{"seasons":[
-            {"kind":"episode","number":1,"total":250,"played":20},
-            {"kind":"episode","number":2,"total":30,"played":4,"metadata":{"description":{"artwork":["cover2"]}}}
-        ]}"""))
+        server.enqueue(
+            MockResponse().setBody(
+                """{"seasons":[
+                    {"kind":"episode","number":1,"total":250,"played":20},
+                    {"kind":"episode","number":2,"total":30,"played":4,"metadata":{"description":{"artwork":["cover2"]}}}
+                ]}""",
+            ),
+        )
+
         val viewModel = vm("show1")
+
         viewModel.state.test {
             var state = awaitItem()
             if (state is DetailState.Loading) state = awaitItem()
             val loaded = state as DetailState.Loaded
             assertTrue(loaded.children.isEmpty())
-            assertEquals(listOf(250,30),loaded.seasons.map { it.total })
-            assertEquals("cover2",loaded.seasons[1].metadata?.description?.artwork?.single())
+            assertEquals(listOf(250, 30), loaded.seasons.map { it.total })
+            assertEquals("cover2", loaded.seasons[1].metadata?.description?.artwork?.single())
         }
-        assertEquals(2,server.requestCount)
+        assertEquals(2, server.requestCount)
+    }
+
+    @Test
+    fun `disc groups do not turn a single-season show into a season grid`() = runTest {
+        server.enqueue(MockResponse().setBody(itemJson("show1", "A Show", kind = "series")))
+        server.enqueue(
+            MockResponse().setBody(
+                """{"seasons":[
+                    {"kind":"episode","number":1,"total":2},
+                    {"kind":"disc","number":1,"total":2}
+                ]}""",
+            ),
+        )
+        server.enqueue(MockResponse().setBody(childrenJson("ep1" to "Pilot", "ep2" to "Two")))
+
+        val viewModel = vm("show1")
+
+        viewModel.state.test {
+            var state = awaitItem()
+            if (state is DetailState.Loading) state = awaitItem()
+            val loaded = state as DetailState.Loaded
+            assertEquals(listOf(1), loaded.seasons.map { it.number })
+            assertEquals(listOf("ep1", "ep2"), loaded.children.map { it.id })
+        }
+        assertEquals(3, server.requestCount)
     }
 
     @Test
     fun `absolute season page uses filtered episodes and keeps all summaries`() = runTest {
         server.enqueue(MockResponse().setBody(itemJson("show1", "A Show", kind = "series")))
-        server.enqueue(MockResponse().setBody("""{"seasons":[
-            {"kind":"episode","number":null,"total":1}, {"kind":"episode","number":0,"total":2}
-        ]}"""))
-        server.enqueue(MockResponse().setBody("""{"children":[
-            {"id":"absolute1","parent_id":"show1","representative_id":"copy","title":"Episode","position":{"kind":"episode","season":null,"episode":1}}
-        ],"total":1,"offset":0}"""))
-        val viewModel = DetailViewModel(application,repo(),"show1","lib1",
-            prefsRepo = PreferencesRepository({ error("no preference server") }), season=SeasonFilter(null))
-        viewModel.state.test {
-            var state=awaitItem()
-            if(state is DetailState.Loading) state=awaitItem()
-            val loaded=state as DetailState.Loaded
-            assertEquals(2,loaded.seasons.size)
-            assertEquals("absolute1",loaded.children.single().id)
-        }
-        server.takeRequest();server.takeRequest()
-        assertEquals("/api/v1/catalogue/libraries/lib1/items/show1/seasons/absolute/items",server.takeRequest().path)
-    }
+        server.enqueue(
+            MockResponse().setBody(
+                """{"seasons":[
+                    {"kind":"episode","number":null,"total":1},
+                    {"kind":"episode","number":0,"total":2}
+                ]}""",
+            ),
+        )
+        server.enqueue(
+            MockResponse().setBody(
+                """{"children":[
+                    {"id":"absolute1","parent_id":"show1","representative_id":"copy","title":"Episode","position":{"kind":"episode","season":null,"episode":1}}
+                ],"total":1,"offset":0}""",
+            ),
+        )
 
+        val viewModel = DetailViewModel(
+            application,
+            repo(),
+            "show1",
+            libraryId = "lib1",
+            prefsRepo = PreferencesRepository({ error("no preference server") }),
+            season = SeasonFilter(null),
+        )
+
+        viewModel.state.test {
+            var state = awaitItem()
+            if (state is DetailState.Loading) state = awaitItem()
+            val loaded = state as DetailState.Loaded
+            assertEquals(2, loaded.seasons.size)
+            assertEquals("absolute1", loaded.children.single().id)
+        }
+        server.takeRequest()
+        server.takeRequest()
+        assertEquals(
+            "/api/v1/catalogue/libraries/lib1/items/show1/seasons/absolute/items",
+            server.takeRequest().path,
+        )
+    }
 }

@@ -2,10 +2,10 @@ package com.kolktech.kahawai.data.network
 
 import com.kolktech.kahawai.data.network.dto.BootstrapResponse
 import com.kolktech.kahawai.data.network.dto.CatalogueArtists
-import com.kolktech.kahawai.data.network.dto.CatalogueSeasons
 import com.kolktech.kahawai.data.network.dto.CatalogueChildren
 import com.kolktech.kahawai.data.network.dto.CatalogueDetail
 import com.kolktech.kahawai.data.network.dto.CatalogueItems
+import com.kolktech.kahawai.data.network.dto.CatalogueSeasons
 import com.kolktech.kahawai.data.network.dto.FeedItems
 import com.kolktech.kahawai.data.network.dto.ItemQueryRequest
 import com.kolktech.kahawai.data.network.dto.LibrarySummary

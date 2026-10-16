@@ -9,8 +9,8 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
-import com.kolktech.kahawai.data.network.dto.Item
 import com.kolktech.kahawai.data.network.dto.CatalogueChildGroup
+import com.kolktech.kahawai.data.network.dto.Item
 import com.kolktech.kahawai.data.network.dto.ItemDetail
 import com.kolktech.kahawai.data.network.dto.Pref
 import com.kolktech.kahawai.data.network.dto.SubtitleTrack
@@ -43,8 +43,6 @@ sealed interface DetailState {
         val detail: ItemDetail,
         val children: List<Item>,
         val seasons: List<CatalogueChildGroup> = emptyList(),
-        /// Page-entry revalidation must also restart an existing Coil painter.
-        val artworkGeneration: Int = 0,
         val subtitleTracks: List<SubtitleTrack> = emptyList(),
         val selectedSubtitleTrack: SubtitleTrack? = null,
         val selectedAudioTrackIndex: Int = 0,
@@ -295,7 +293,6 @@ class DetailViewModel(
                 sourceScope = sourcePreferenceScope(detail.sources, choice.sourceId)
                 val current = _state.value as? DetailState.Loaded ?: return@launch
                 _state.value = current.copy(
-                    artworkGeneration = current.artworkGeneration + 1,
                     detail = detail,
                     children = children,
                     seasons = seasons,

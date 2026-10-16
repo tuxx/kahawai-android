@@ -68,9 +68,8 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
-import coil3.request.CachePolicy
-import com.kolktech.kahawai.data.network.dto.CatalogueChildGroup
 import com.kolktech.kahawai.R
+import com.kolktech.kahawai.data.network.dto.CatalogueChildGroup
 import com.kolktech.kahawai.data.network.dto.ClientAudioStream
 import com.kolktech.kahawai.data.network.dto.Chapter
 import com.kolktech.kahawai.data.network.dto.Item
@@ -339,7 +338,6 @@ private fun DetailContent(
                         model = seasonArtworkModel(
                             repo, detail.libraryId, detail.id,
                             selectedSeason?.let { selected -> state.seasons.find { it.number == selected.number } },
-                            state.artworkGeneration,
                         ),
                         contentDescription = detail.title,
                         contentScale = ContentScale.Crop,
@@ -384,7 +382,6 @@ private fun DetailContent(
                                 repo = repo,
                                 libraryId = detail.libraryId,
                                 parentId = detail.id,
-                                artworkGeneration = state.artworkGeneration,
                                 onOpenSeason = onOpenSeason,
                                 firstFocusRequester = firstChildFocusRequester,
                                 modifier = Modifier.padding(top = 16.dp),
@@ -415,10 +412,10 @@ private fun DetailContent(
                     ) {
                         AsyncImage(
                             model = seasonArtworkModel(
-                            repo, detail.libraryId, detail.id,
-                            selectedSeason?.let { selected -> state.seasons.find { it.number == selected.number } },
-                            state.artworkGeneration, size = null,
-                        ),
+                                repo, detail.libraryId, detail.id,
+                                selectedSeason?.let { selected -> state.seasons.find { it.number == selected.number } },
+                                size = null,
+                            ),
                             contentDescription = detail.title,
                             contentScale = ContentScale.Crop,
                             placeholder = painterResource(R.drawable.placeholder_poster),
@@ -463,7 +460,6 @@ private fun DetailContent(
                         repo = repo,
                         libraryId = detail.libraryId,
                         parentId = detail.id,
-                        artworkGeneration = state.artworkGeneration,
                         onOpenSeason = onOpenSeason,
                         firstFocusRequester = firstChildFocusRequester,
                         modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
@@ -937,28 +933,30 @@ private fun seasonLabel(number: Int?): String = when (number) {
     else -> stringResource(R.string.detail_season, number)
 }
 
-/// A season response can temporarily contain show-art fallback while its
-/// prefetch runs. Revalidate on page entry: hub originals/variants are already
-/// cached, so this costs a LAN read, not provider traffic or image rebuilding.
-/// Existing client caches are retained; other posters keep their normal policy.
+/// A season's cover URL stays the same while the hub backfills its art
+/// (the hub keys its own cache off the resolved artwork), so the client
+/// cache key carries the summary's artwork value: it changes, and the
+/// cover reloads, only when new art actually arrives. Until then a
+/// return from the player is served from Coil's caches without a flash.
 @Composable
 private fun seasonArtworkModel(
     repo: CatalogRepository,
     library: String,
     parent: String,
     group: CatalogueChildGroup?,
-    generation: Int,
     size: String? = "card",
 ): Any? {
-    if (group?.metadata?.description?.artwork.isNullOrEmpty()) return repo.artworkUrl(library, parent, size)
+    val artwork = group?.metadata?.description?.artwork
+    if (artwork.isNullOrEmpty()) return repo.artworkUrl(library, parent, size)
+    val url = repo.artworkUrl(library, parent, size, season = group.number?.toString() ?: "absolute")
+        ?: return null
     val context = LocalContext.current
-    val url = repo.seasonArtworkUrl(library, parent, group.number, size)
-    return remember(context, url, generation) {
+    return remember(context, url, artwork) {
+        val key = "$url#${artwork.joinToString("|")}"
         ImageRequest.Builder(context)
             .data(url)
-            .memoryCachePolicy(CachePolicy.DISABLED)
-            .diskCachePolicy(CachePolicy.DISABLED)
-            .memoryCacheKey("$url@$generation")
+            .memoryCacheKey(key)
+            .diskCacheKey(key)
             .build()
     }
 }
@@ -973,7 +971,6 @@ private fun SeasonGrid(
     repo: CatalogRepository,
     libraryId: String,
     parentId: String,
-    artworkGeneration: Int,
     onOpenSeason: (season: Int?) -> Unit,
     firstFocusRequester: FocusRequester,
     modifier: Modifier = Modifier,
@@ -985,7 +982,7 @@ private fun SeasonGrid(
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     row.forEachIndexed { index, season ->
                         PosterCard(
-                            artworkModel = seasonArtworkModel(repo, libraryId, parentId, season, artworkGeneration),
+                            artworkModel = seasonArtworkModel(repo, libraryId, parentId, season),
                             title = seasonLabel(season.number),
                             subtitle = if (season.played == season.total) {
                                 stringResource(R.string.watched)

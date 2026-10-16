@@ -4,10 +4,8 @@ import com.kolktech.kahawai.data.network.ApiClient
 import com.kolktech.kahawai.data.network.ApiService
 import com.kolktech.kahawai.data.network.apiJson
 import com.kolktech.kahawai.data.network.isAuthError
-import com.kolktech.kahawai.data.network.dto.CatalogueChildGroup
-import retrofit2.HttpException
-import java.io.IOException
 import com.kolktech.kahawai.data.network.dto.CapabilityProfile
+import com.kolktech.kahawai.data.network.dto.CatalogueChildGroup
 import com.kolktech.kahawai.data.network.dto.Item
 import com.kolktech.kahawai.data.network.dto.ItemDetail
 import com.kolktech.kahawai.data.network.dto.ItemQueryRequest
@@ -27,6 +25,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.JsonNull
+import retrofit2.HttpException
+import java.io.IOException
 
 /// [api] is built lazily, not eagerly at construction: this repository is
 /// `remember`ed once at the top of the nav graph, which composes (and
@@ -171,11 +171,15 @@ class CatalogRepository(apiProvider: () -> ApiService = { ApiClient.apiService()
     /// Older hubs expose the same summaries beside their child pages. Only
     /// a missing route qualifies for fallback; authentication and server
     /// failures remain errors rather than silently empty season grids.
-    suspend fun seasons(library: String, id: String): List<CatalogueChildGroup> = try {
-        api.seasons(library, id).seasons
-    } catch (error: HttpException) {
-        if (error.code() != 404) throw error
-        api.children(library, id, limit = 1).groups.filter { it.kind == "episode" }
+    /// Only episode groups are seasons; disc groups never reach the caller.
+    suspend fun seasons(library: String, id: String): List<CatalogueChildGroup> {
+        val groups = try {
+            api.seasons(library, id).seasons
+        } catch (error: HttpException) {
+            if (error.code() != 404) throw error
+            api.children(library, id, limit = 1).groups
+        }
+        return groups.filter { it.kind == "episode" }
     }
 
     /// The episode after [id] in the same series, or null at the end of it
@@ -222,13 +226,15 @@ class CatalogRepository(apiProvider: () -> ApiService = { ApiClient.apiService()
     /// null falls through to Coil as "no image" rather than crashing the
     /// screen that's still on-screen while the server gets unconfigured
     /// (e.g. mid "change server" navigation).
-    /// Null identifies the absolute-numbered group, not an omitted selector.
-    fun seasonArtworkUrl(libraryId: String, id: String, season: Int?, size: String? = "card"): String? =
-        artworkUrl(libraryId, id, size)?.let { "$it${if (size == null) "?" else "&"}season=${season ?: "absolute"}" }
-
-    fun artworkUrl(libraryId: String, id: String, size: String? = null): String? {
+    ///
+    /// `season` selects a season's own cover, using the same selector as
+    /// [children]: a season number, or "absolute" for the absolute-numbered
+    /// group. Null asks for the item's own artwork.
+    fun artworkUrl(libraryId: String, id: String, size: String? = null, season: String? = null): String? {
         val base = ApiClient.baseUrlOrNull() ?: return null
-        val query = size?.let { "?size=$it" }.orEmpty()
+        val query = listOfNotNull(size?.let { "size=$it" }, season?.let { "season=$it" })
+            .joinToString("&")
+            .let { if (it.isEmpty()) "" else "?$it" }
         return "${base}api/v1/catalogue/libraries/$libraryId/items/$id/artwork$query"
     }
 }
