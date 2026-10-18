@@ -34,12 +34,10 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
-import kotlin.coroutines.coroutineContext
 
 private const val TAG = "AssSubtitleOverlay"
 
@@ -177,20 +175,11 @@ fun AssSubtitleOverlay(
                             var fedAnything = false
                             while (isActive) {
                                 val call = client.newCall(Request.Builder().url(url).build())
-                                // execute()/readUtf8Line() are blocking calls
-                                // that don't check coroutine cancellation
-                                // between reads — only Call.cancel() actually
-                                // interrupts a stalled read, by closing the
-                                // socket. Without this hook, a cancelled
-                                // coroutine leaves this readTimeout(0) connection
-                                // open until the hub happens to send another
-                                // line or closes it itself.
-                                val cancelHandle = coroutineContext.job.invokeOnCompletion { call.cancel() }
                                 try {
-                                    call.execute().use { response ->
+                                    call.useCancellableResponse { response ->
                                         if (!response.isSuccessful) {
                                             Log.w(TAG, ".ass tap http ${response.code} url=$url track=${track.id} attempt=$attempt")
-                                            return@use
+                                            return@useCancellableResponse
                                         }
                                         val source = response.body.source()
                                         val header = StringBuilder()
@@ -207,7 +196,7 @@ fun AssSubtitleOverlay(
                                             if (!sawEvents && line.trim().equals("[Events]", ignoreCase = true)) sawEvents = true
                                             if (sawEvents && line.trim().startsWith("Format:", ignoreCase = true)) headerDone = true
                                         }
-                                        if (!headerDone) return@use
+                                        if (!headerDone) return@useCancellableResponse
                                         fedAnything = true
                                         assTrack.readBuffer(header.toString().toByteArray())
                                         // Each subsequent Dialogue line is
@@ -228,8 +217,6 @@ fun AssSubtitleOverlay(
                                     throw e
                                 } catch (e: Exception) {
                                     Log.w(TAG, ".ass tap failed url=$url track=${track.id} attempt=$attempt", e)
-                                } finally {
-                                    cancelHandle.dispose()
                                 }
                                 if (fedAnything || ++attempt >= maxAttempts) break
                                 delay(700)

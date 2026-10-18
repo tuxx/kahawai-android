@@ -20,8 +20,9 @@ import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
-import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.upstream.DefaultAllocator
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -37,6 +38,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.kolktech.kahawai.R
+import com.kolktech.kahawai.BuildConfig
+import com.kolktech.kahawai.playback.PlaybackLoadControl
 import com.kolktech.kahawai.data.network.ApiClient
 import com.kolktech.kahawai.data.network.dto.CapabilityProfile
 import com.kolktech.kahawai.data.network.dto.Chapter
@@ -55,6 +58,7 @@ import com.kolktech.kahawai.playback.CapabilityProfileBuilder
 import com.kolktech.kahawai.playback.IMAGE_FORMATS
 import com.kolktech.kahawai.playback.PREF_AUDIO
 import com.kolktech.kahawai.playback.SessionKeepalive
+import com.kolktech.kahawai.playback.SessionRecovery
 import com.kolktech.kahawai.playback.langEq
 import com.kolktech.kahawai.playback.needsMediaType
 import com.kolktech.kahawai.playback.rememberedAudioValue
@@ -469,6 +473,9 @@ class PlayerViewModel(
     private val _title = MutableStateFlow<String?>(null)
     val title: StateFlow<String?> = _title
 
+    private val playbackAllocator = DefaultAllocator(true, C.DEFAULT_BUFFER_SEGMENT_SIZE)
+    private val playbackLoadControl = PlaybackLoadControl(Runtime.getRuntime().maxMemory(), playbackAllocator)
+
     private val realPlayer: ExoPlayer by lazy {
         val dataSourceFactory = DefaultDataSource.Factory(
             getApplication(),
@@ -476,34 +483,9 @@ class PlayerViewModel(
         )
         ExoPlayer.Builder(getApplication())
             .setMediaSourceFactory(buildPlayerMediaSourceFactory(dataSourceFactory))
-            // Media3's defaults (~15s minBuffer, 5s bufferForPlaybackAfterRebuffer)
-            // assume a source that can be downloaded far ahead of playback.
-            // A remux/transcode session is the opposite: the hub is
-            // encoding the HLS EVENT playlist in close to real time (see
-            // attach()'s targetOffsetMs note), so its production lead over
-            // the playhead is often just a few seconds, especially right
-            // after a session starts or right after auto-advance starts a
-            // new session while the hub is still tearing the previous one
-            // down. Holding out for 15s of buffer that the hub simply
-            // hasn't produced yet is what showed up as repeated
-            // "loading" flashes at the start of a video (worse right after
-            // auto-advance, where the hub's lead is thinnest) — the
-            // player buffers, catches up to the produced edge, stalls,
-            // and re-buffers, several times over, before the hub's lead
-            // widens enough to clear the default threshold. Shorter
-            // targets let it resume as soon as a realistic amount of
-            // media is actually available instead of chasing an
-            // unreachable buffer floor.
-            .setLoadControl(
-                DefaultLoadControl.Builder()
-                    .setBufferDurationsMs(
-                        /* minBufferMs = */ 10_000,
-                        DefaultLoadControl.DEFAULT_MAX_BUFFER_MS,
-                        /* bufferForPlaybackMs = */ 1_000,
-                        /* bufferForPlaybackAfterRebufferMs = */ 1_500,
-                    )
-                    .build(),
-            )
+            // Keep short startup/rebuffer thresholds for produced HLS,
+            // with heap headroom and Media3's smaller per-track targets.
+            .setLoadControl(playbackLoadControl)
             // handleAudioFocus=true so ExoPlayer pauses itself on transient
             // audio focus loss (e.g. an incoming call ringing) and resumes
             // when focus is returned, without us wiring up an AudioManager
@@ -511,6 +493,28 @@ class PlayerViewModel(
             .setAudioAttributes(AudioAttributes.DEFAULT, /* handleAudioFocus= */ true)
             .build()
             .apply {
+                if (BuildConfig.DEBUG) {
+                    addAnalyticsListener(object : AnalyticsListener {
+                        override fun onAudioUnderrun(
+                            eventTime: AnalyticsListener.EventTime,
+                            bufferSize: Int,
+                            bufferSizeMs: Long,
+                            elapsedSinceLastFeedMs: Long,
+                        ) {
+                            Log.w(TAG, "audio underrun positionMs=${eventTime.currentPlaybackPositionMs} " +
+                                "outputBufferMs=$bufferSizeMs lastFeedMs=$elapsedSinceLastFeedMs")
+                        }
+
+                        override fun onDroppedVideoFrames(
+                            eventTime: AnalyticsListener.EventTime,
+                            droppedFrames: Int,
+                            elapsedMs: Long,
+                        ) {
+                            Log.w(TAG, "video frames dropped positionMs=${eventTime.currentPlaybackPositionMs} " +
+                                "frames=$droppedFrames elapsedMs=$elapsedMs")
+                        }
+                    })
+                }
                 // Text tracks start DISABLED, and applySubtitleTrackSelectionOverride
                 // re-enables the renderer only while a Text-delivery track is
                 // actually picked. "No override" is not "off": DefaultTrackSelector
@@ -709,22 +713,7 @@ class PlayerViewModel(
     private var subtitleEpoch: Int = 0
     private var playbackEndedHandled = false
 
-    /// Guards [attemptSessionRecovery] to one retry per failure — reset
-    /// on a successful recovery so a LATER reap (e.g. the device going
-    /// back to sleep for hours again) still gets its own one-shot retry,
-    /// rather than every error after the first going straight to terminal.
-    private var recoveryAttempted = false
-
-    /// True once this playback has reached STATE_READY at least once.
-    /// [attemptSessionRecovery] only spends a retry (and the hub session
-    /// slot that costs) on errors that happen AFTER that — the "hub
-    /// reaped a stale session" scenario the retry exists for. A file
-    /// that errors before ever reaching READY is broken outright (bad
-    /// codec, corrupt source, etc.): retrying it just burns a second
-    /// session on the same unplayable file instead of surfacing the
-    /// error immediately. Never reset once true — it's a property of
-    /// "this media decodes on this device", not of the current session.
-    private var everReachedReady = false
+    private val sessionRecovery = SessionRecovery()
 
     /// The offsetMs value baked into the current MediaItem's sideloaded
     /// VTT configs as `shift_ms` (see textDeliverySubtitleConfigs). When
@@ -802,7 +791,7 @@ class PlayerViewModel(
                         "currentPos=${realPlayer.currentPosition} bufferedPos=${realPlayer.bufferedPosition} " +
                         "playWhenReady=${realPlayer.playWhenReady}",
                 )
-                if (playbackState == Player.STATE_READY) everReachedReady = true
+                if (playbackState == Player.STATE_READY) sessionRecovery.onReady()
                 if (playbackState == Player.STATE_ENDED) handlePlaybackEnded()
                 updatePausedState()
             }
@@ -1065,7 +1054,7 @@ class PlayerViewModel(
     /// minus the picker-revert bookkeeping that only applies to a
     /// user-driven subtitle switch.
     ///
-    /// [everReachedReady] gates that retry: an error that arrives before
+    /// [sessionRecovery] gates that retry: an error that arrives before
     /// playback ever got going is a broken/unplayable file, not a reaped
     /// session — retrying would just start a SECOND session against the
     /// same file, which fails the exact same way while also eating one
@@ -1075,13 +1064,12 @@ class PlayerViewModel(
     /// hub's reaper — that's what was filling up the session limit.
     private fun attemptSessionRecovery(error: PlaybackException) {
         val failedSession = session
-        if (recoveryAttempted || failedSession == null || !everReachedReady) {
+        if (failedSession == null || !sessionRecovery.tryBegin()) {
             progressJob?.cancel()
             _state.value = PlayerState.Error(getApplication<Application>().getString(R.string.player_playback_failed, error.readableMessage()))
             endSessionBestEffort(failedSession?.sessionId)
             return
         }
-        recoveryAttempted = true
         val positionMs = offsetMs + realPlayer.currentPosition
         Log.w(TAG, "attempting session recovery item=$itemId oldSessionId=${failedSession.sessionId} positionMs=$positionMs")
         viewModelScope.launch {
@@ -1089,8 +1077,7 @@ class PlayerViewModel(
                 val profile = CapabilityProfileBuilder.build(getApplication())
                 val newSession = startSessionAndAttach(profile, positionMs, burnPickOrNull(_selectedSubtitleTrack.value))
                 _state.value = PlayerState.Ready
-                recoveryAttempted = false
-                Log.w(TAG, "session recovery succeeded item=$itemId newSessionId=${newSession.sessionId}")
+                Log.w(TAG, "replacement session attached item=$itemId newSessionId=${newSession.sessionId}; awaiting playback READY")
                 endSessionBestEffort(failedSession.sessionId)
             } catch (e: Exception) {
                 Log.e(TAG, "session recovery failed item=$itemId", e)
@@ -1943,6 +1930,13 @@ class PlayerViewModel(
                         "currentPos=${realPlayer.currentPosition} bufferedPos=${realPlayer.bufferedPosition} " +
                         "playWhenReady=${realPlayer.playWhenReady}",
                 )
+                if (BuildConfig.DEBUG) {
+                    val runtime = Runtime.getRuntime()
+                    Log.d(TAG, "playback memory mediaBytes=${playbackAllocator.totalBytesAllocated} " +
+                        "targetBytes=${playbackLoadControl.targetBytes} " +
+                        "heapUsedBytes=${runtime.totalMemory() - runtime.freeMemory()} " +
+                        "heapMaxBytes=${runtime.maxMemory()}")
+                }
                 // playWhenReady, not isPlaying — mirrors the web client's
                 // gate (web/src/views/Player.tsx's tick: `if
                 // (!video.paused) report()`). HTML5's `.paused` only

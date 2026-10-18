@@ -19,6 +19,7 @@ import androidx.media3.extractor.ExtractorsFactory
 import androidx.media3.extractor.text.DefaultSubtitleParserFactory
 import androidx.media3.extractor.text.SubtitleExtractor
 import androidx.annotation.OptIn
+import com.kolktech.kahawai.playback.PlaybackExtractorsFactory
 
 /// See [buildPlayerMediaSourceFactory]. Media3's own default is
 /// 3.5 (DefaultHlsPlaylistTracker.DEFAULT_PLAYLIST_STUCK_TARGET_DURATION_COEFFICIENT,
@@ -97,7 +98,7 @@ internal fun buildPlayerMediaSourceFactory(dataSourceFactory: DataSource.Factory
             DefaultHlsPlaylistTracker(dsFactory, errorPolicy, parserFactory, cmcdConfig, HLS_PLAYLIST_STUCK_COEFFICIENT, executor)
         }
     val subtitleParserFactory = DefaultSubtitleParserFactory()
-    val progressiveFactory = DefaultMediaSourceFactory(dataSourceFactory)
+    val progressiveFactory = DefaultMediaSourceFactory(dataSourceFactory, PlaybackExtractorsFactory())
     fun subtitleSource(config: MediaItem.SubtitleConfiguration): MediaSource {
         val format = Format.Builder()
             .setSampleMimeType(config.mimeType)
