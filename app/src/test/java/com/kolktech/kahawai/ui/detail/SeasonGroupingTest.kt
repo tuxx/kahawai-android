@@ -1,5 +1,6 @@
 package com.kolktech.kahawai.ui.detail
 
+import com.kolktech.kahawai.data.network.dto.CatalogueChildGroup
 import com.kolktech.kahawai.data.network.dto.Item
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -37,5 +38,15 @@ class SeasonGroupingTest {
         val track = Item(id = "t1", kind = "track", title = "t1", libraryId = "lib1")
 
         assertTrue(groupSeasons(listOf(track, track.copy(id = "t2"))).isEmpty())
+    }
+
+    @Test
+    fun `server groups include seasons beyond the loaded episode page`() {
+        val groups = listOf(
+            CatalogueChildGroup("episode", 1, 250, 20),
+            CatalogueChildGroup("episode", 2, 20, 5),
+        )
+
+        assertEquals(groups, seasonGroups(groups, emptyList()))
     }
 }

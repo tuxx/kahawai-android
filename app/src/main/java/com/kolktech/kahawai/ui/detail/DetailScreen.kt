@@ -67,7 +67,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
 import com.kolktech.kahawai.R
+import com.kolktech.kahawai.data.network.dto.CatalogueChildGroup
 import com.kolktech.kahawai.data.network.dto.ClientAudioStream
 import com.kolktech.kahawai.data.network.dto.Chapter
 import com.kolktech.kahawai.data.network.dto.Item
@@ -111,8 +113,12 @@ private fun Modifier.dpadFocusBorder(shape: Shape = CircleShape): Modifier {
 /// that carry no season number at all.
 data class SeasonFilter(val number: Int?)
 
-/// One season box on a show's page.
-private data class SeasonGroup(val number: Int?, val total: Int, val played: Int)
+/// Server summaries are complete even when no episode rows have been loaded.
+internal fun seasonGroups(groups: List<CatalogueChildGroup>, children: List<Item>): List<CatalogueChildGroup> =
+    groups.filter { it.kind == "episode" }.takeIf { it.isNotEmpty() }
+        ?: groupSeasons(children).map { (number, episodes) ->
+            CatalogueChildGroup("episode", number, episodes.size, episodes.count { it.played })
+        }
 
 /// The seasons to offer as boxes, in the order the hub listed their
 /// episodes — or none when there is nothing to choose between: a
@@ -147,7 +153,9 @@ fun DetailScreen(
     val application = LocalContext.current.applicationContext as Application
     val viewModel: DetailViewModel = viewModel(
         key = itemId,
-        factory = viewModelFactory { initializer { DetailViewModel(application, repo, itemId, libraryId) } },
+        factory = viewModelFactory {
+            initializer { DetailViewModel(application, repo, itemId, libraryId, season = season) }
+        },
     )
     val state by viewModel.state.collectAsState()
     val transientError by viewModel.transientError.collectAsState()
@@ -188,7 +196,7 @@ fun DetailScreen(
             // NavGraph's onOpenFeedItem) before anyone knew the show keeps
             // a flat list: it would be a copy of the show's own page, so
             // it hands straight back to that one instead of drawing.
-            is DetailState.Loaded if season != null && groupSeasons(s.children).isEmpty() -> {
+            is DetailState.Loaded if season != null && seasonGroups(s.seasons, s.children).size <= 1 -> {
                 LaunchedEffect(Unit) { onBack() }
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
@@ -209,9 +217,7 @@ fun DetailScreen(
                 // A multi-season show lists its seasons as boxes here and
                 // leaves the episodes to each season's own page.
                 val seasons = if (season == null) {
-                    groupSeasons(s.children).map { (number, episodes) ->
-                        SeasonGroup(number, episodes.size, episodes.count { it.played })
-                    }
+                    seasonGroups(s.seasons, s.children).takeIf { it.size > 1 }.orEmpty()
                 } else {
                     emptyList()
                 }
@@ -229,6 +235,7 @@ fun DetailScreen(
                     state = s,
                     children = children,
                     seasons = seasons,
+                    selectedSeason = season,
                     seasonLabel = season?.let { seasonLabel(it.number) },
                     repo = repo,
                     onOpenItem = onOpenItem,
@@ -275,7 +282,8 @@ fun DetailScreen(
 private fun DetailContent(
     state: DetailState.Loaded,
     children: List<Item>,
-    seasons: List<SeasonGroup>,
+    seasons: List<CatalogueChildGroup>,
+    selectedSeason: SeasonFilter?,
     seasonLabel: String?,
     repo: CatalogRepository,
     onOpenItem: (itemId: String, libraryId: String) -> Unit,
@@ -327,7 +335,10 @@ private fun DetailContent(
                         .aspectRatio(2f / 3f),
                 ) {
                     AsyncImage(
-                        model = repo.artworkUrl(detail.libraryId, detail.id, "card"),
+                        model = seasonArtworkModel(
+                            repo, detail.libraryId, detail.id,
+                            selectedSeason?.let { selected -> state.seasons.find { it.number == selected.number } },
+                        ),
                         contentDescription = detail.title,
                         contentScale = ContentScale.Crop,
                         placeholder = painterResource(R.drawable.placeholder_poster),
@@ -368,7 +379,9 @@ private fun DetailContent(
                         item {
                             SeasonGrid(
                                 seasons = seasons,
-                                artworkModel = repo.artworkUrl(detail.libraryId, detail.id, "card"),
+                                repo = repo,
+                                libraryId = detail.libraryId,
+                                parentId = detail.id,
                                 onOpenSeason = onOpenSeason,
                                 firstFocusRequester = firstChildFocusRequester,
                                 modifier = Modifier.padding(top = 16.dp),
@@ -398,7 +411,11 @@ private fun DetailContent(
                             .aspectRatio(16f / 9f),
                     ) {
                         AsyncImage(
-                            model = repo.artworkUrl(detail.libraryId, detail.id),
+                            model = seasonArtworkModel(
+                                repo, detail.libraryId, detail.id,
+                                selectedSeason?.let { selected -> state.seasons.find { it.number == selected.number } },
+                                size = null,
+                            ),
                             contentDescription = detail.title,
                             contentScale = ContentScale.Crop,
                             placeholder = painterResource(R.drawable.placeholder_poster),
@@ -440,7 +457,9 @@ private fun DetailContent(
                 item {
                     SeasonGrid(
                         seasons = seasons,
-                        artworkModel = repo.artworkUrl(detail.libraryId, detail.id, "card"),
+                        repo = repo,
+                        libraryId = detail.libraryId,
+                        parentId = detail.id,
                         onOpenSeason = onOpenSeason,
                         firstFocusRequester = firstChildFocusRequester,
                         modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
@@ -914,14 +933,44 @@ private fun seasonLabel(number: Int?): String = when (number) {
     else -> stringResource(R.string.detail_season, number)
 }
 
+/// A season's cover URL stays the same while the hub backfills its art
+/// (the hub keys its own cache off the resolved artwork), so the client
+/// cache key carries the summary's artwork value: it changes, and the
+/// cover reloads, only when new art actually arrives. Until then a
+/// return from the player is served from Coil's caches without a flash.
+@Composable
+private fun seasonArtworkModel(
+    repo: CatalogRepository,
+    library: String,
+    parent: String,
+    group: CatalogueChildGroup?,
+    size: String? = "card",
+): Any? {
+    val artwork = group?.metadata?.description?.artwork
+    if (artwork.isNullOrEmpty()) return repo.artworkUrl(library, parent, size)
+    val url = repo.artworkUrl(library, parent, size, season = group.number?.toString() ?: "absolute")
+        ?: return null
+    val context = LocalContext.current
+    return remember(context, url, artwork) {
+        val key = "$url#${artwork.joinToString("|")}"
+        ImageRequest.Builder(context)
+            .data(url)
+            .memoryCacheKey(key)
+            .diskCacheKey(key)
+            .build()
+    }
+}
+
 /// The show's seasons as poster boxes, laid out like the library grid. Rows
 /// are chunked by hand rather than a LazyVerticalGrid because this sits
 /// inside the page's own LazyColumn, and there are only ever a handful.
-/// Every box wears the show's poster: a season has no artwork of its own.
+/// Covers use the hub's season projection; absent metadata keeps show art.
 @Composable
 private fun SeasonGrid(
-    seasons: List<SeasonGroup>,
-    artworkModel: Any?,
+    seasons: List<CatalogueChildGroup>,
+    repo: CatalogRepository,
+    libraryId: String,
+    parentId: String,
     onOpenSeason: (season: Int?) -> Unit,
     firstFocusRequester: FocusRequester,
     modifier: Modifier = Modifier,
@@ -933,7 +982,7 @@ private fun SeasonGrid(
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     row.forEachIndexed { index, season ->
                         PosterCard(
-                            artworkModel = artworkModel,
+                            artworkModel = seasonArtworkModel(repo, libraryId, parentId, season),
                             title = seasonLabel(season.number),
                             subtitle = if (season.played == season.total) {
                                 stringResource(R.string.watched)
