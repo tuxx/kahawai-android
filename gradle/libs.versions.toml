@@ -17,7 +17,7 @@ kotlinxSerialization = "1.11.0"
 retrofitSerializationConverter = "1.0.0"
 coil = "3.6.3"
 datastorePreferences = "1.2.1"
-tink = "1.23.0"
+tink = "1.24.0"
 coroutines = "1.11.0"
 profileinstaller = "1.4.1"
 # libass for Android (MIT) — faithful ASS/SSA rendering (styling, fonts,
