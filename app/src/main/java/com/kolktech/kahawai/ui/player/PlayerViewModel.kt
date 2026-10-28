@@ -418,7 +418,12 @@ internal fun skipOffer(
             SkipOffer(SKIP_LABELS.getValue(segment.kind), segment.startMs, targetMs = skipTargetMs(segment, durationMs))
         }
     }
-    if (nextEpisodeId != null && known && posMs < durationMs && durationMs - posMs <= NEXT_EPISODE_OFFER_MS) {
+    // Only for an episode with no credits segment at all: where there is
+    // one, it already decided above what the end of the episode offers,
+    // and whatever plays after it (a post-credits scene) is meant to be
+    // watched, not skipped by an OK press meant for play/pause.
+    val hasCredits = segments.any { it.kind == "credits" }
+    if (!hasCredits && nextEpisodeId != null && known && posMs < durationMs && durationMs - posMs <= NEXT_EPISODE_OFFER_MS) {
         return SkipOffer(R.string.player_next_episode, durationMs - NEXT_EPISODE_OFFER_MS, nextEpisodeId = nextEpisodeId)
     }
     return null

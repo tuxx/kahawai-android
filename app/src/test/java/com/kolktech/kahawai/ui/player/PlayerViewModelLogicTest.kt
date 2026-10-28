@@ -528,4 +528,13 @@ class PlayerViewModelLogicTest {
         assertNull(skipOffer(emptyList(), 2_380_000, 2_400_000, null))
         assertNull(skipOffer(emptyList(), 2_380_000, C.TIME_UNSET, "e2"))
     }
+
+    @Test
+    fun `a post-credits scene isn't offered away as the next episode`() {
+        // Credits end two minutes before the file does: what follows is a
+        // scene, and its last 30 seconds must leave OK to play/pause.
+        val segments = listOf(segment("credits", 2_100_000, 2_280_000))
+        assertNull(skipOffer(segments, 2_380_000, 2_400_000, nextEpisodeId = "e2"))
+        assertNull(skipOffer(segments, 2_399_000, 2_400_000, nextEpisodeId = "e2"))
+    }
 }
