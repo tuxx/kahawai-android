@@ -65,6 +65,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -408,6 +409,9 @@ private fun PlayerContent(
     onPlayEpisode: (itemId: String, startMs: Long, subtitleTrackId: Long?) -> Unit,
 ) {
     val context = LocalContext.current
+    // Strings for the side panel and skip button: configuration-aware,
+    // unlike context.getString, so a locale change re-resolves them.
+    val localResources = LocalResources.current
     val activity = remember(context) { context.findActivity() }
     val audioManager = remember(context) {
         context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -875,7 +879,7 @@ private fun PlayerContent(
     fun selectPictureSize(index: Int) {
         if (index == resizeModeIndex) return
         applyResize(index)
-        flash(GestureIndicator.Resize(context.getString(RESIZE_MODES[index].second)))
+        flash(GestureIndicator.Resize(localResources.getString(RESIZE_MODES[index].second)))
     }
 
     val touchState = remember { TouchState() }
@@ -1345,7 +1349,7 @@ private fun PlayerContent(
                     if (hasFocus()) view.findViewById<View>(androidx.media3.ui.R.id.exo_play_pause)?.requestFocus()
                     isVisible = false
                 } else {
-                    text = context.getString(offer.labelRes)
+                    text = localResources.getString(offer.labelRes)
                     setCompoundDrawablesRelativeWithIntrinsicBounds(skipOfferIcon(offer), 0, 0, 0)
                     setOnClickListener { takeSkipOffer(offer) }
                     isVisible = true
@@ -1376,20 +1380,20 @@ private fun PlayerContent(
         if (!isInPip) {
             val panelModel = remember(
                 currentTracks, subtitleTracks, selectedSubtitle, resizeModeIndex, playbackSpeed,
-                autoSkipEnabled, autoPlayNext, segments, adjacentEpisodes, episodes,
+                autoSkipEnabled, autoPlayNext, segments, adjacentEpisodes, episodes, localResources,
             ) {
-                val mono = context.getString(R.string.channels_mono)
-                val stereo = context.getString(R.string.channels_stereo)
+                val mono = localResources.getString(R.string.channels_mono)
+                val stereo = localResources.getString(R.string.channels_stereo)
                 val subtitleStrings = SubtitleOptionStrings(
-                    embedded = context.getString(R.string.subtitle_origin_embedded),
-                    external = context.getString(R.string.subtitle_origin_external),
-                    downloaded = context.getString(R.string.subtitle_origin_downloaded),
-                    ocr = context.getString(R.string.subtitle_origin_ocr),
-                    burnedIn = context.getString(R.string.subtitle_burned_in),
-                    machine = context.getString(R.string.subtitle_badge_machine),
+                    embedded = localResources.getString(R.string.subtitle_origin_embedded),
+                    external = localResources.getString(R.string.subtitle_origin_external),
+                    downloaded = localResources.getString(R.string.subtitle_origin_downloaded),
+                    ocr = localResources.getString(R.string.subtitle_origin_ocr),
+                    burnedIn = localResources.getString(R.string.subtitle_burned_in),
+                    machine = localResources.getString(R.string.subtitle_badge_machine),
                 )
                 val audio = if (viewModel.isDirect) {
-                    val nameProvider = DefaultTrackNameProvider(context.resources)
+                    val nameProvider = DefaultTrackNameProvider(localResources)
                     directAudioTracks().map { (group, index) ->
                         val format = group.getTrackFormat(index)
                         val channels = channelLabel(format.channelCount, mono, stereo)
@@ -1426,7 +1430,7 @@ private fun PlayerContent(
                         EpisodeOption(
                             id = episode.id,
                             season = episode.season?.let {
-                                if (it == 0) context.getString(R.string.detail_season_specials) else context.getString(R.string.detail_season, it)
+                                if (it == 0) localResources.getString(R.string.detail_season_specials) else localResources.getString(R.string.detail_season, it)
                             },
                             title = listOfNotNull(episode.episode?.let { "$it." }, episode.title).joinToString(" "),
                             artworkUrl = catalogRepo.artworkUrl(episode.libraryId, episode.id, "card"),
@@ -1437,11 +1441,11 @@ private fun PlayerContent(
                         )
                     },
                     subtitles = listOf(
-                        TrackOption(context.getString(R.string.subtitle_off), selected = selectedSubtitle == null),
+                        TrackOption(localResources.getString(R.string.subtitle_off), selected = selectedSubtitle == null),
                     ) + subtitleTracks.map { subtitleOption(it, it.id == selectedSubtitle?.id, subtitleStrings) },
                     audio = audio,
                     pictureSizes = RESIZE_MODES.mapIndexed { index, (_, labelRes) ->
-                        TrackOption(context.getString(labelRes), selected = index == resizeModeIndex)
+                        TrackOption(localResources.getString(labelRes), selected = index == resizeModeIndex)
                     },
                     speeds = PLAYBACK_SPEEDS.map { TrackOption(formatSpeed(it), selected = it == playbackSpeed) },
                     autoSkip = autoSkipEnabled.takeIf { segments.isNotEmpty() },
