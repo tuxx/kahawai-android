@@ -48,7 +48,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -63,6 +62,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -127,6 +127,14 @@ private val FocusBackground = Color.White.copy(alpha = 0.16f)
 private val SecondaryText = Color.White.copy(alpha = 0.6f)
 private val SectionText = Color.White.copy(alpha = 0.5f)
 
+// Sized for a phone held sideways (~400dp tall), where the panel has to
+// show a whole settings group without scrolling; a tablet or TV just gets
+// more of it on screen at once.
+private val RowLabelSize = 15.sp
+private val RowValueSize = 14.sp
+private val RowDetailSize = 12.sp
+private val RowMinHeight = 44.dp
+
 /// Settings and track pickers as a panel over the video, in place of the
 /// old anchored popups: on the right in landscape, as a bottom sheet in
 /// portrait. Every row is a focusable button, so it works with a D-pad as
@@ -164,7 +172,7 @@ internal fun PlayerSidePanel(
     BoxWithConstraints(modifier.fillMaxSize()) {
         val landscape = maxWidth > maxHeight
         val sheetMaxHeight = maxHeight * 0.8f
-        val panelWidth = (maxWidth * 0.42f).coerceIn(320.dp, 420.dp).coerceAtMost(maxWidth)
+        val panelWidth = (maxWidth * 0.36f).coerceIn(280.dp, 380.dp).coerceAtMost(maxWidth)
 
         AnimatedVisibility(visible = open, enter = fadeIn(), exit = fadeOut()) {
             Box(
@@ -181,7 +189,7 @@ internal fun PlayerSidePanel(
             enter = if (landscape) slideInHorizontally { it } + fadeIn() else slideInVertically { it } + fadeIn(),
             exit = if (landscape) slideOutHorizontally { it } + fadeOut() else slideOutVertically { it } + fadeOut(),
         ) {
-            val shape = if (landscape) RoundedCornerShape(28.dp) else RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+            val shape = if (landscape) RoundedCornerShape(24.dp) else RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
             Column(
                 modifier = Modifier
                     .then(
@@ -189,7 +197,7 @@ internal fun PlayerSidePanel(
                             Modifier
                                 .fillMaxHeight()
                                 .windowInsetsPadding(WindowInsets.displayCutout)
-                                .padding(12.dp)
+                                .padding(8.dp)
                                 .width(panelWidth)
                         } else {
                             Modifier.fillMaxWidth().heightIn(max = sheetMaxHeight)
@@ -255,25 +263,35 @@ private fun PanelHeader(title: String, onBack: (() -> Unit)?, onClose: () -> Uni
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = if (onBack != null) 8.dp else 24.dp, end = 12.dp, top = 12.dp, bottom = 8.dp),
+            .padding(start = if (onBack != null) 4.dp else 20.dp, end = 8.dp, top = 8.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (onBack != null) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.kw_back), tint = Color.White)
+            IconButton(onClick = onBack, modifier = Modifier.size(40.dp)) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = stringResource(R.string.kw_back),
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp),
+                )
             }
         }
         Text(
             title,
             modifier = Modifier.weight(1f),
             color = Color.White,
-            style = MaterialTheme.typography.titleLarge,
+            fontSize = 19.sp,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        IconButton(onClick = onClose, modifier = Modifier.background(GroupBackground, CircleShape)) {
-            Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.player_panel_close), tint = Color.White)
+        IconButton(onClick = onClose, modifier = Modifier.size(36.dp).background(GroupBackground, CircleShape)) {
+            Icon(
+                Icons.Filled.Close,
+                contentDescription = stringResource(R.string.player_panel_close),
+                tint = Color.White,
+                modifier = Modifier.size(18.dp),
+            )
         }
     }
 }
@@ -292,7 +310,7 @@ private fun SettingsPage(
     val audio = model.audio.firstOrNull { it.selected }?.summary
     val showSession = model.autoSkip != null || model.autoPlayNext != null
 
-    LazyColumn(contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = 16.dp)) {
+    LazyColumn(contentPadding = PaddingValues(start = 10.dp, end = 10.dp, bottom = 12.dp)) {
         item { SectionHeader(stringResource(R.string.player_panel_picture)) }
         item {
             RowGroup {
@@ -354,13 +372,13 @@ private fun TracksPage(
         if (model.audio.isNotEmpty()) {
             Row(
                 modifier = Modifier
-                    .padding(horizontal = 16.dp)
-                    .padding(bottom = 8.dp)
+                    .padding(horizontal = 12.dp)
+                    .padding(top = 4.dp, bottom = 6.dp)
                     .fillMaxWidth()
                     .clip(CircleShape)
                     .background(GroupBackground)
-                    .padding(4.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    .padding(3.dp),
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
             ) {
                 // Off isn't a track, so it doesn't count.
                 TabButton(stringResource(R.string.subtitles), model.subtitles.size - 1, tab == TracksTab.Subtitles) {
@@ -396,7 +414,7 @@ private fun RowScope.TabButton(label: String, count: Int, selected: Boolean, onC
                 },
             )
             .clickable(interaction, LocalIndication.current, role = Role.Tab, onClick = onClick)
-            .padding(vertical = 10.dp),
+            .padding(vertical = 7.dp),
         contentAlignment = Alignment.Center,
     ) {
         val textColor = if (selected) Color.Black else Color.White
@@ -407,7 +425,7 @@ private fun RowScope.TabButton(label: String, count: Int, selected: Boolean, onC
             },
             color = textColor,
             fontWeight = FontWeight.SemiBold,
-            style = MaterialTheme.typography.titleSmall,
+            fontSize = 14.sp,
         )
     }
 }
@@ -421,7 +439,7 @@ private fun OptionList(options: List<TrackOption>, onSelect: (Int) -> Unit) {
     val focus = rememberInitialFocus()
     LazyColumn(
         state = listState,
-        contentPadding = PaddingValues(start = 8.dp, end = 8.dp, bottom = 16.dp),
+        contentPadding = PaddingValues(start = 6.dp, end = 6.dp, bottom = 12.dp),
     ) {
         itemsIndexed(options) { index, option ->
             OptionRow(
@@ -440,15 +458,16 @@ private fun OptionRow(option: TrackOption, onClick: () -> Unit, modifier: Modifi
         role = Role.RadioButton,
         enabled = option.enabled,
         background = if (option.selected) GroupBackground else Color.Transparent,
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(12.dp),
         modifier = modifier,
     ) {
         Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
                     option.title,
                     color = Color.White,
-                    style = MaterialTheme.typography.titleMedium,
+                    fontSize = RowLabelSize,
+                    fontWeight = FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false),
@@ -456,12 +475,12 @@ private fun OptionRow(option: TrackOption, onClick: () -> Unit, modifier: Modifi
                 option.badges.forEach { Badge(it) }
             }
             option.detail?.let {
-                Text(it, color = SecondaryText, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(it, color = SecondaryText, fontSize = RowDetailSize, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }
         if (option.selected) {
-            Spacer(Modifier.width(12.dp))
-            Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White)
+            Spacer(Modifier.width(10.dp))
+            Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
         }
     }
 }
@@ -471,7 +490,7 @@ private fun Badge(text: String) {
     Text(
         text,
         color = Color.White.copy(alpha = 0.85f),
-        fontSize = 11.sp,
+        fontSize = 10.sp,
         fontWeight = FontWeight.Bold,
         maxLines = 1,
         modifier = Modifier
@@ -485,9 +504,10 @@ private fun SectionHeader(text: String) {
     Text(
         text.uppercase(),
         color = SectionText,
-        style = MaterialTheme.typography.labelMedium,
-        letterSpacing = 1.2.sp,
-        modifier = Modifier.padding(start = 12.dp, top = 16.dp, bottom = 8.dp),
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Medium,
+        letterSpacing = 1.sp,
+        modifier = Modifier.padding(start = 12.dp, top = 12.dp, bottom = 5.dp),
     )
 }
 
@@ -496,7 +516,7 @@ private fun RowGroup(content: @Composable () -> Unit) {
     Column(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(14.dp))
             .background(GroupBackground),
     ) { content() }
 }
@@ -515,12 +535,12 @@ private fun ValueRow(
     enabled: Boolean = true,
 ) {
     PanelRow(onClick = onClick, role = Role.Button, enabled = enabled, modifier = modifier) {
-        Text(label, color = Color.White, style = MaterialTheme.typography.titleMedium, maxLines = 1)
-        Spacer(Modifier.width(16.dp))
+        Text(label, color = Color.White, fontSize = RowLabelSize, fontWeight = FontWeight.Medium, maxLines = 1)
+        Spacer(Modifier.width(12.dp))
         Text(
             value,
             color = SecondaryText,
-            style = MaterialTheme.typography.bodyLarge,
+            fontSize = RowValueSize,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
@@ -530,7 +550,7 @@ private fun ValueRow(
             Icons.AutoMirrored.Filled.KeyboardArrowRight,
             contentDescription = null,
             tint = SecondaryText,
-            modifier = Modifier.padding(start = 4.dp).size(20.dp),
+            modifier = Modifier.padding(start = 2.dp).size(18.dp),
         )
     }
 }
@@ -538,10 +558,11 @@ private fun ValueRow(
 @Composable
 private fun SwitchRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
     PanelRow(onClick = { onCheckedChange(!checked) }, role = Role.Switch) {
-        Text(label, color = Color.White, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+        Text(label, color = Color.White, fontSize = RowLabelSize, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
         // The whole row is the toggle (and the focus target), so the
-        // switch itself only shows the state.
-        Switch(checked = checked, onCheckedChange = null)
+        // switch itself only shows the state — drawn smaller than
+        // Material's touch-sized default to sit in a compact row.
+        Switch(checked = checked, onCheckedChange = null, modifier = Modifier.scale(0.8f))
     }
 }
 
@@ -564,7 +585,7 @@ private fun EpisodeList(episodes: List<EpisodeOption>, onSelect: (Int) -> Unit) 
     val currentEntry = entries.indexOfFirst { it is Int && episodes[it].current }.coerceAtLeast(0)
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = (currentEntry - 1).coerceAtLeast(0))
     val focus = rememberInitialFocus()
-    LazyColumn(state = listState, contentPadding = PaddingValues(start = 8.dp, end = 8.dp, bottom = 16.dp)) {
+    LazyColumn(state = listState, contentPadding = PaddingValues(start = 6.dp, end = 6.dp, bottom = 12.dp)) {
         itemsIndexed(entries) { entryIndex, entry ->
             when (entry) {
                 is String -> Box(Modifier.padding(start = 8.dp)) { SectionHeader(entry) }
@@ -584,12 +605,12 @@ private fun EpisodeRow(episode: EpisodeOption, onClick: () -> Unit, modifier: Mo
         onClick = onClick,
         role = Role.Button,
         background = if (episode.current) GroupBackground else Color.Transparent,
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(12.dp),
         modifier = modifier,
     ) {
         Box(
             Modifier
-                .width(112.dp)
+                .width(96.dp)
                 .aspectRatio(16f / 9f)
                 .clip(RoundedCornerShape(8.dp))
                 .background(GroupBackground),
@@ -612,7 +633,8 @@ private fun EpisodeRow(episode: EpisodeOption, onClick: () -> Unit, modifier: Mo
             Text(
                 episode.title,
                 color = Color.White,
-                style = MaterialTheme.typography.titleSmall,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -620,7 +642,7 @@ private fun EpisodeRow(episode: EpisodeOption, onClick: () -> Unit, modifier: Mo
                 Text(
                     stringResource(R.string.player_now_playing),
                     color = SecondaryText,
-                    style = MaterialTheme.typography.bodySmall,
+                    fontSize = RowDetailSize,
                 )
             }
         }
@@ -654,12 +676,12 @@ private fun PanelRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = 56.dp)
+            .heightIn(min = RowMinHeight)
             .clip(shape)
             .background(if (focused) FocusBackground else background)
             .clickable(interaction, LocalIndication.current, enabled = enabled, role = role, onClick = onClick)
             .alpha(if (enabled) 1f else 0.4f)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = 14.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         content = content,
     )
