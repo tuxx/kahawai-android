@@ -480,4 +480,19 @@ class PlayerViewModelLogicTest {
         val groups = listOf(TextTrackInfo("application/vobsub", null, "de"))
         assertNull(nativeBitmapGroupIndex(groups, ordinal = 2, language = "en"))
     }
+
+    @Test
+    fun `an episode title reads season and episode over the show`() {
+        assertEquals(
+            PlayerTitle("S4:E1 \u201CUSS Callister\u201D", "Black Mirror"),
+            playerTitle("episode", "USS Callister", 4, 1, "Black Mirror"),
+        )
+    }
+
+    @Test
+    fun `anything else is just its title`() {
+        assertEquals(PlayerTitle("Arrival"), playerTitle("movie", "Arrival", null, null, null))
+        // An episode missing its numbering can't say S?:E?.
+        assertEquals(PlayerTitle("Pilot"), playerTitle("episode", "Pilot", null, 1, "Show"))
+    }
 }

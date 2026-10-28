@@ -33,11 +33,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -65,7 +63,6 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -92,6 +89,7 @@ import androidx.media3.ui.PlayerView
 import androidx.media3.ui.SubtitleView
 import com.kolktech.kahawai.R
 import com.kolktech.kahawai.data.network.dto.languageDisplayName
+import com.kolktech.kahawai.data.repository.CatalogRepository
 import com.kolktech.kahawai.data.repository.PlaybackRepository
 import com.kolktech.kahawai.data.settings.AppSettingsStore
 import com.kolktech.kahawai.ui.MainActivity
@@ -189,6 +187,15 @@ private val OK_KEYS = setOf(
     KeyEvent.KEYCODE_NUMPAD_ENTER,
 )
 
+/// Below this width the bottom row's actions drop their labels.
+private const val ACTION_LABELS_MIN_WIDTH_DP = 600
+
+private val ACTION_LABEL_IDS = listOf(
+    R.id.kw_episodes_label,
+    R.id.kw_audio_subtitles_label,
+    R.id.kw_next_episode_label,
+)
+
 private val PLAYBACK_SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {
@@ -204,7 +211,9 @@ fun PlayerScreen(
     appSettingsStore: AppSettingsStore,
     onClose: () -> Unit,
     onNextEpisode: (itemId: String, subtitleTrackId: Long?) -> Unit = { _, _ -> },
-    onPreviousEpisode: (itemId: String, subtitleTrackId: Long?) -> Unit = { _, _ -> },
+    /// Any other episode of the show, from the side panel's episode list,
+    /// opened at [startMs] (its resume point, or 0).
+    onPlayEpisode: (itemId: String, startMs: Long, subtitleTrackId: Long?) -> Unit = { _, _, _ -> },
     initialAudioTrack: Int = -1,
     initialSubtitleTrackId: Long? = null,
     libraryId: String,
@@ -329,7 +338,7 @@ fun PlayerScreen(
                     Text(stringResource(R.string.kw_back))
                 }
             }
-            is PlayerState.Ready -> PlayerContent(viewModel, appSettingsStore, closeAndPause, onNextEpisode, onPreviousEpisode)
+            is PlayerState.Ready -> PlayerContent(viewModel, appSettingsStore, closeAndPause, onNextEpisode, onPlayEpisode)
         }
     }
 }
@@ -390,7 +399,7 @@ private fun PlayerContent(
     appSettingsStore: AppSettingsStore,
     onClose: () -> Unit,
     onNextEpisode: (itemId: String, subtitleTrackId: Long?) -> Unit,
-    onPreviousEpisode: (itemId: String, subtitleTrackId: Long?) -> Unit,
+    onPlayEpisode: (itemId: String, startMs: Long, subtitleTrackId: Long?) -> Unit,
 ) {
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
@@ -728,6 +737,7 @@ private fun PlayerContent(
     // than threading the one PlayerScreen built for the ViewModel) keeps
     // this composable self-contained.
     val subtitleRepo = remember { PlaybackRepository() }
+    val catalogRepo = remember { CatalogRepository() }
 
     // HUB-37: chapter marks on the native styled progress bar. The
     // controller layout's time bar (id exo_progress, a
@@ -1046,10 +1056,9 @@ private fun PlayerContent(
                     // reach. Land focus on the play/pause button
                     // specifically (not a bare requestFocus() on the
                     // container, which resolves to whatever's first in
-                    // kw_player_control_view's focus order - kw_prev
-                    // ahead of exo_play_pause - the moment a previous
-                    // episode makes that button visible) as soon as the
-                    // controls appear, whichever path showed them. No-op
+                    // kw_player_control_view's focus order - the top
+                    // bar's back button) as soon as the controls appear,
+                    // whichever path showed them. No-op
                     // in touch mode, where none of these buttons take
                     // focus.
                     setControllerVisibilityListener(
@@ -1087,8 +1096,20 @@ private fun PlayerContent(
                     findViewById<ImageButton>(androidx.media3.ui.R.id.exo_settings).setOnClickListener {
                         panelStack = listOf(PanelPage.Settings)
                     }
-                    findViewById<ImageButton>(R.id.kw_subtitle).setOnClickListener {
+                    findViewById<View>(R.id.kw_audio_subtitles).setOnClickListener {
                         panelStack = listOf(PanelPage.Tracks(TracksTab.Subtitles))
+                    }
+                    findViewById<View>(R.id.kw_episodes).setOnClickListener {
+                        panelStack = listOf(PanelPage.Episodes)
+                    }
+                    // The bottom row's labels only fit beside the time on
+                    // a wide screen; on a narrow one (portrait phone) the
+                    // actions go icon-only rather than into media3's
+                    // overflow menu.
+                    addOnLayoutChangeListener { v, left, _, right, _, oldLeft, _, oldRight, _ ->
+                        if (right - left == oldRight - oldLeft) return@addOnLayoutChangeListener
+                        val wide = (right - left) / v.resources.displayMetrics.density >= ACTION_LABELS_MIN_WIDTH_DP
+                        for (id in ACTION_LABEL_IDS) v.findViewById<View>(id)?.isVisible = wide
                     }
                     // Hooked on the content frame's layout, since both
                     // resize-mode switches and video-size changes relayout
@@ -1103,22 +1124,6 @@ private fun PlayerContent(
                 }
             },
         )
-
-        // Media3 updateTrackLists enables exo_subtitle only for native text
-        // tracks. Our ASS/image overlays are outside that list, so this button
-        // has its own ID and follows the same hub tracks as its menu. Direct
-        // bitmap picks still use applySubtitleTrackSelectionOverride.
-        // https://github.com/androidx/media/blob/1.11.0/libraries/ui/src/main/java/androidx/media3/ui/PlayerControlView.java#L1363
-        LaunchedEffect(subtitleTracks, selectedSubtitle, playerView) {
-            playerView?.findViewById<ImageButton>(R.id.kw_subtitle)?.apply {
-                isEnabled = selectedSubtitle != null || subtitleTracks.any { it.delivery != "none" }
-                alpha = if (isEnabled) 1f else 0.3f
-                setImageResource(
-                    if (selectedSubtitle != null) androidx.media3.ui.R.drawable.exo_styled_controls_subtitle_on
-                    else androidx.media3.ui.R.drawable.exo_styled_controls_subtitle_off,
-                )
-            }
-        }
 
         // Nothing relayouts when the controls fade in or out, so the text
         // renderer's padding is re-applied here; the overlays take the same
@@ -1178,7 +1183,11 @@ private fun PlayerContent(
         // The native title view can't observe the StateFlow itself, so
         // push updates into it from composition.
         LaunchedEffect(title, playerView) {
-            playerView?.findViewById<TextView>(R.id.kw_player_title)?.text = title.orEmpty()
+            playerView?.findViewById<TextView>(R.id.kw_player_title)?.text = title?.primary.orEmpty()
+            playerView?.findViewById<TextView>(R.id.kw_player_subtitle)?.apply {
+                text = title?.secondary.orEmpty()
+                isVisible = title?.secondary != null
+            }
         }
 
         // Like kw_player_title, exo_position/exo_duration are refreshed by
@@ -1205,35 +1214,24 @@ private fun PlayerContent(
             }
         }
 
-        // kw_prev/kw_next (see kw_player_control_view.xml for why they're
-        // not exo_prev/exo_next) stay gone until adjacentEpisodes resolves
-        // an id on that side — a movie or the first/last episode of a show
-        // leaves the corresponding button hidden rather than shown-but-
-        // useless. subtitleTrack id rides along so the next/previous
-        // episode opens with the same language already selected.
+        // Episodes / Next episode stay gone until the show's episode list
+        // resolves — a movie, or the last episode of a show for Next,
+        // leaves the button hidden rather than shown-but-useless.
+        // subtitleTrack id rides along so the next episode opens with the
+        // same language already selected.
         val adjacentEpisodes by viewModel.adjacentEpisodes.collectAsState()
-        LaunchedEffect(adjacentEpisodes, playerView) {
-            val previousId = adjacentEpisodes?.previousId
+        val episodes by viewModel.episodes.collectAsState()
+        LaunchedEffect(adjacentEpisodes, episodes, playerView) {
             val nextId = adjacentEpisodes?.nextId
-            playerView?.findViewById<ImageButton>(R.id.kw_prev)?.apply {
-                visibility = if (previousId != null) View.VISIBLE else View.GONE
-                setOnClickListener {
-                    previousId?.let { onPreviousEpisode(it, viewModel.selectedSubtitleTrack.value?.id) }
-                }
-            }
-            playerView?.findViewById<ImageButton>(R.id.kw_next)?.apply {
-                visibility = if (nextId != null) View.VISIBLE else View.GONE
+            playerView?.findViewById<View>(R.id.kw_episodes)?.isVisible = episodes.isNotEmpty()
+            playerView?.findViewById<View>(R.id.kw_next_episode)?.apply {
+                isVisible = nextId != null
                 setOnClickListener {
                     nextId?.let { onNextEpisode(it, viewModel.selectedSubtitleTrack.value?.id) }
                 }
             }
         }
 
-        // Center pause glyph — feedback that playback is actually paused
-        // (as opposed to stalled/still loading) whether the viewer paused
-        // via the controls or, with them hidden, an OK/enter press (see
-        // the onPlayerKey branch above). Excluded from PiP, whose tiny
-        // window has no room for anything but the video itself.
         val isPaused by viewModel.isPaused.collectAsState()
 
         // Controls follow pause state directly rather than their own
@@ -1260,23 +1258,6 @@ private fun PlayerContent(
             } else {
                 view.controllerShowTimeoutMs = DEFAULT_CONTROLLER_SHOW_TIMEOUT_MS
                 view.hideController()
-            }
-        }
-
-        if (isPaused && !isInPip && !panelOpen) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .size(88.dp)
-                    .background(Color.Black.copy(alpha = 0.45f), CircleShape),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    painter = painterResource(androidx.media3.ui.R.drawable.exo_icon_pause),
-                    contentDescription = stringResource(androidx.media3.ui.R.string.exo_controls_pause_description),
-                    tint = Color.White,
-                    modifier = Modifier.size(48.dp),
-                )
             }
         }
 
@@ -1349,7 +1330,7 @@ private fun PlayerContent(
         if (!isInPip) {
             val panelModel = remember(
                 currentTracks, subtitleTracks, selectedSubtitle, resizeModeIndex, playbackSpeed,
-                autoSkipEnabled, autoPlayNext, segments, adjacentEpisodes,
+                autoSkipEnabled, autoPlayNext, segments, adjacentEpisodes, episodes,
             ) {
                 val mono = context.getString(R.string.channels_mono)
                 val stereo = context.getString(R.string.channels_stereo)
@@ -1395,6 +1376,20 @@ private fun PlayerContent(
                     }
                 }
                 PlayerPanelModel(
+                    episodes = episodes.map { episode ->
+                        EpisodeOption(
+                            id = episode.id,
+                            season = episode.season?.let {
+                                if (it == 0) context.getString(R.string.detail_season_specials) else context.getString(R.string.detail_season, it)
+                            },
+                            title = listOfNotNull(episode.episode?.let { "$it." }, episode.title).joinToString(" "),
+                            artworkUrl = catalogRepo.artworkUrl(episode.libraryId, episode.id, "card"),
+                            resumePositionMs = episode.resumePositionMs,
+                            resumeDurationMs = episode.resumeDurationMs,
+                            played = episode.played,
+                            current = episode.id == viewModel.itemId,
+                        )
+                    },
                     subtitles = listOf(
                         TrackOption(context.getString(R.string.subtitle_off), selected = selectedSubtitle == null),
                     ) + subtitleTracks.map { subtitleOption(it, it.id == selectedSubtitle?.id, subtitleStrings) },
@@ -1417,6 +1412,14 @@ private fun PlayerContent(
                 onSelectSpeed = { viewModel.player.setPlaybackSpeed(PLAYBACK_SPEEDS[it]) },
                 onAutoSkipChange = { autoSkipEnabled = it },
                 onAutoPlayNextChange = viewModel::setAutoPlayNext,
+                onSelectEpisode = { index ->
+                    val episode = episodes[index]
+                    // The one already playing just carries on.
+                    if (episode.id != viewModel.itemId) {
+                        val startMs = episode.resumePositionMs?.takeIf { !episode.played } ?: 0L
+                        onPlayEpisode(episode.id, startMs, viewModel.selectedSubtitleTrack.value?.id)
+                    }
+                },
             )
 
             SnackbarHost(

@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Centre transport (kw_player_control_view.xml): media3's own
+         rewind/play/forward styles, scaled up. The rewind/forward buttons
+         keep media3's ids so PlayerControlView still labels them with the
+         seek increment and wires their clicks. -->
+    <style name="KwPlayerCenter.Rewind" parent="ExoStyledControls.Button.Center.RewWithAmount">
+        <item name="android:layout_width">64dp</item>
+        <item name="android:layout_height">64dp</item>
+        <item name="android:paddingBottom">22dp</item>
+        <item name="android:textSize">12sp</item>
+    </style>
+
+    <style name="KwPlayerCenter.Forward" parent="ExoStyledControls.Button.Center.FfwdWithAmount">
+        <item name="android:layout_width">64dp</item>
+        <item name="android:layout_height">64dp</item>
+        <item name="android:paddingBottom">22dp</item>
+        <item name="android:textSize">12sp</item>
+    </style>
+
+    <style name="KwPlayerCenter.PlayPause" parent="ExoStyledControls.Button.Center.PlayPause">
+        <item name="android:layout_width">88dp</item>
+        <item name="android:layout_height">88dp</item>
+        <item name="android:padding">14dp</item>
+        <item name="android:layout_marginStart">40dp</item>
+        <item name="android:layout_marginEnd">40dp</item>
+        <item name="android:scaleType">fitCenter</item>
+    </style>
+
+    <!-- Bottom-row labelled actions (Episodes, Audio & subtitles, Next
+         episode). PlayerScreen hides the labels on narrow screens. -->
+    <style name="KwPlayerAction">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">44dp</item>
+        <item name="android:layout_marginStart">4dp</item>
+        <item name="android:orientation">horizontal</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:paddingStart">12dp</item>
+        <item name="android:paddingEnd">12dp</item>
+        <item name="android:background">@drawable/kw_player_action_bg</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+    </style>
+
+    <style name="KwPlayerAction.Icon" parent="">
+        <item name="android:layout_width">24dp</item>
+        <item name="android:layout_height">24dp</item>
+        <item name="android:importantForAccessibility">no</item>
+    </style>
+
+    <style name="KwPlayerAction.Label" parent="">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginStart">8dp</item>
+        <item name="android:textColor">@android:color/white</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:maxLines">1</item>
+    </style>
+</resources>

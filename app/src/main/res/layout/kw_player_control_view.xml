@@ -1,11 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Copy of media3-ui's exo_player_control_view.xml (1.10.0) with the center
-  controls block (prev/rewind/play/ffwd/next) removed and small
-  prev/play-pause/next buttons placed at the start of the bottom bar
-  instead, before the time display. Audio track selection lives in the
-  settings gear menu (see PlayerScreen's showSettingsMenu), not as its own
-  bottom-bar button — portrait screens don't have the width. Media3 doesn't
+  Based on media3-ui's exo_player_control_view.xml (1.11.1), restyled:
+  large rewind / play-pause / forward in the centre (media3's own ids, so
+  PlayerControlView labels and wires them), the seek bar full width above
+  a bottom row of labelled actions (Episodes, Audio & subtitles, Next
+  episode), and back / title / settings across the top. Media3 doesn't
   expose a public hook to add entries into its own controls row, so
   app:controller_layout_id (pointing here) is the officially documented way
   to customize it; if media3-ui's control layout changes in a future
@@ -17,96 +16,64 @@
   <View android:id="@id/exo_controls_background"
       android:layout_width="0dp"
       android:layout_height="0dp"
-      android:background="@color/exo_black_opacity_60"/>
+      android:background="@drawable/kw_player_scrim"/>
 
   <FrameLayout android:id="@id/exo_bottom_bar"
       android:layout_width="match_parent"
       android:layout_height="@dimen/exo_styled_bottom_bar_height"
       android:layout_marginTop="@dimen/exo_styled_bottom_bar_margin_top"
       android:layout_gravity="bottom"
-      android:background="@color/exo_bottom_bar_background"
+      android:paddingStart="8dp"
+      android:paddingEnd="8dp"
+      android:background="@android:color/transparent"
       android:layoutDirection="ltr">
 
-    <LinearLayout android:id="@+id/kw_bottom_start_controls"
+    <LinearLayout android:id="@id/exo_time"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="center_vertical|start"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:layoutDirection="ltr">
+        android:paddingStart="@dimen/exo_styled_bottom_bar_time_padding"
+        android:paddingEnd="@dimen/exo_styled_bottom_bar_time_padding"
+        android:paddingLeft="@dimen/exo_styled_bottom_bar_time_padding"
+        android:paddingRight="@dimen/exo_styled_bottom_bar_time_padding"
+        android:layoutDirection="ltr"
+        android:importantForAccessibility="noHideDescendants">
 
-      <!-- kw_prev/kw_next (not exo_prev/exo_next): PlayerControlView only
-           wires up its own previous/next-episode navigation, dimming and
-           auto managing enabled state based on the player's own timeline
-           (COMMAND_SEEK_TO_PREVIOUS/NEXT) rather than the actual show's
-           adjacent episodes — since every session is a single MediaItem,
-           that left "<" just restarting the current item and ">"
-           permanently disabled. findViewById(R.id.exo_prev/exo_next) is
-           null-guarded in PlayerControlView, so giving these custom ids
-           opts them out of that management entirely; PlayerScreen owns
-           their visibility and click handling instead (see
-           adjacentEpisodes wiring). -->
-      <ImageButton android:id="@+id/kw_prev"
-          style="@style/ExoStyledControls.Button.Bottom"
-          android:src="@drawable/exo_styled_controls_previous"
-          android:scaleType="fitCenter"
-          android:visibility="gone"
-          android:contentDescription="@string/exo_controls_previous_description"/>
+      <TextView android:id="@id/exo_position"
+          style="@style/ExoStyledControls.TimeText.Position"/>
 
-      <ImageButton android:id="@id/exo_play_pause"
-          style="@style/ExoStyledControls.Button.Bottom"
-          android:src="@drawable/exo_styled_controls_play"
-          android:scaleType="fitCenter"
-          android:contentDescription="@string/exo_controls_play_description"/>
+      <TextView
+          style="@style/ExoStyledControls.TimeText.Separator"/>
 
-      <ImageButton android:id="@+id/kw_next"
-          style="@style/ExoStyledControls.Button.Bottom"
-          android:src="@drawable/exo_styled_controls_next"
-          android:scaleType="fitCenter"
-          android:visibility="gone"
-          android:contentDescription="@string/exo_controls_next_description"/>
+      <TextView android:id="@id/exo_duration"
+          style="@style/ExoStyledControls.TimeText.Duration"/>
 
-      <LinearLayout android:id="@id/exo_time"
-          android:layout_width="wrap_content"
-          android:layout_height="wrap_content"
-          android:paddingStart="@dimen/exo_styled_bottom_bar_time_padding"
-          android:paddingEnd="@dimen/exo_styled_bottom_bar_time_padding"
-          android:paddingLeft="@dimen/exo_styled_bottom_bar_time_padding"
-          android:paddingRight="@dimen/exo_styled_bottom_bar_time_padding"
-          android:layoutDirection="ltr"
-          android:importantForAccessibility="noHideDescendants">
+      <TextView android:id="@+id/kw_ends_at_separator"
+          style="@style/ExoStyledControls.TimeText.Separator"
+          android:visibility="gone"/>
 
-        <TextView android:id="@id/exo_position"
-            style="@style/ExoStyledControls.TimeText.Position"/>
-
-        <TextView
-            style="@style/ExoStyledControls.TimeText.Separator"/>
-
-        <TextView android:id="@id/exo_duration"
-            style="@style/ExoStyledControls.TimeText.Duration"/>
-
-        <TextView android:id="@+id/kw_ends_at_separator"
-            style="@style/ExoStyledControls.TimeText.Separator"
-            android:visibility="gone"/>
-
-        <!-- Populated/refreshed from PlayerScreen's AndroidView effects
-             (see kw_ends_at handling there) - media3-ui only knows how to
-             fill exo_position/exo_duration itself. Starts empty/gone so
-             live streams (no known duration) never show a dangling
-             separator with nothing after it. -->
-        <TextView android:id="@+id/kw_ends_at"
-            style="@style/ExoStyledControls.TimeText.Duration"
-            android:text=""
-            android:visibility="gone"/>
-
-      </LinearLayout>
+      <!-- Populated/refreshed from PlayerScreen's AndroidView effects
+           (see kw_ends_at handling there) - media3-ui only knows how to
+           fill exo_position/exo_duration itself. Starts empty/gone so
+           live streams (no known duration) never show a dangling
+           separator with nothing after it. -->
+      <TextView android:id="@+id/kw_ends_at"
+          style="@style/ExoStyledControls.TimeText.Duration"
+          android:text=""
+          android:visibility="gone"/>
 
     </LinearLayout>
 
+    <!-- media3's own id: PlayerControlViewLayoutManager moves these
+         children into exo_extra_controls behind the overflow button when
+         they don't fit, and expects exo_overflow_show to stay last.
+         PlayerScreen drops the action labels on narrow screens first, so
+         that should only happen on very small ones. -->
     <LinearLayout android:id="@id/exo_basic_controls"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="center_vertical|end"
+        android:gravity="center_vertical"
         android:layoutDirection="ltr">
 
       <ImageButton android:id="@id/exo_vr"
@@ -118,13 +85,41 @@
       <ImageButton android:id="@id/exo_repeat_toggle"
           style="@style/ExoStyledControls.Button.Bottom.RepeatToggle"/>
 
-      <ImageButton android:id="@+id/kw_subtitle"
-          android:contentDescription="@string/subtitles"
-          android:enabled="false"
-          style="@style/ExoStyledControls.Button.Bottom.CC"/>
+      <!-- Custom ids throughout: media3 has no notion of a show's
+           episodes, and every session is a single MediaItem, so its own
+           exo_next would only ever be disabled. PlayerScreen owns their
+           visibility and clicks. -->
+      <LinearLayout android:id="@+id/kw_episodes"
+          style="@style/KwPlayerAction"
+          android:visibility="gone"
+          android:contentDescription="@string/player_episodes">
+        <ImageView style="@style/KwPlayerAction.Icon"
+            android:src="@drawable/kw_ic_episodes"/>
+        <TextView android:id="@+id/kw_episodes_label"
+            style="@style/KwPlayerAction.Label"
+            android:text="@string/player_episodes"/>
+      </LinearLayout>
 
-      <ImageButton android:id="@id/exo_settings"
-          style="@style/ExoStyledControls.Button.Bottom.Settings"/>
+      <LinearLayout android:id="@+id/kw_audio_subtitles"
+          style="@style/KwPlayerAction"
+          android:contentDescription="@string/player_panel_audio_subtitles">
+        <ImageView style="@style/KwPlayerAction.Icon"
+            android:src="@drawable/kw_ic_subtitles"/>
+        <TextView android:id="@+id/kw_audio_subtitles_label"
+            style="@style/KwPlayerAction.Label"
+            android:text="@string/player_panel_audio_subtitles"/>
+      </LinearLayout>
+
+      <LinearLayout android:id="@+id/kw_next_episode"
+          style="@style/KwPlayerAction"
+          android:visibility="gone"
+          android:contentDescription="@string/player_next_episode">
+        <ImageView style="@style/KwPlayerAction.Icon"
+            android:src="@drawable/kw_ic_skip_next"/>
+        <TextView android:id="@+id/kw_next_episode_label"
+            style="@style/KwPlayerAction.Label"
+            android:text="@string/player_next_episode"/>
+      </LinearLayout>
 
       <ImageButton android:id="@id/exo_fullscreen"
           style="@style/ExoStyledControls.Button.Bottom.FullScreen"/>
@@ -167,9 +162,38 @@
       android:layout_height="@dimen/exo_styled_progress_layout_height"
       android:layout_gravity="bottom"
       android:layout_marginBottom="@dimen/exo_styled_progress_margin_bottom"
+      android:layout_marginStart="8dp"
+      android:layout_marginEnd="8dp"
       app:played_color="@android:color/transparent"
       app:buffered_color="@android:color/transparent"
       app:unplayed_color="@android:color/transparent"/>
+
+  <!-- Rewind / play-pause / forward. No exo_prev/exo_next: episodes are
+       the bottom row's business (see kw_episodes/kw_next_episode). -->
+  <LinearLayout android:id="@id/exo_center_controls"
+      android:layout_width="wrap_content"
+      android:layout_height="wrap_content"
+      android:layout_gravity="center"
+      android:background="@android:color/transparent"
+      android:gravity="center"
+      android:padding="@dimen/exo_styled_controls_padding"
+      android:clipToPadding="false"
+      android:layoutDirection="ltr">
+
+    <!-- singleLine="false" as in media3's own include, to avoid
+         https://github.com/androidx/media/issues/511. -->
+    <Button android:id="@id/exo_rew_with_amount"
+        android:singleLine="false"
+        style="@style/KwPlayerCenter.Rewind"/>
+
+    <ImageButton android:id="@id/exo_play_pause"
+        style="@style/KwPlayerCenter.PlayPause"/>
+
+    <Button android:id="@id/exo_ffwd_with_amount"
+        android:singleLine="false"
+        style="@style/KwPlayerCenter.Forward"/>
+
+  </LinearLayout>
 
   <LinearLayout android:id="@id/exo_minimal_controls"
       android:layout_width="wrap_content"
@@ -185,11 +209,12 @@
 
   </LinearLayout>
 
-  <!-- Back button + title live here (not in a Compose overlay) because
-       exo_top_controls is one of the views PlayerControlViewLayoutManager
-       alpha-animates together with the background and bottom bar, so they
-       fade in/out in perfect sync with the rest of the controls — and, as
-       real controller children, they're reachable by D-pad focus on TV. -->
+  <!-- Back button, title and settings live here (not in a Compose
+       overlay) because exo_top_controls is one of the views
+       PlayerControlViewLayoutManager alpha-animates together with the
+       background and bottom bar, so they fade in/out in perfect sync with
+       the rest of the controls — and, as real controller children,
+       they're reachable by D-pad focus on TV. -->
   <LinearLayout
       android:id="@+id/exo_top_controls"
       android:layout_width="match_parent"
@@ -210,23 +235,54 @@
         android:src="@drawable/kw_ic_arrow_back"
         android:contentDescription="@string/kw_back"/>
 
-    <TextView
-        android:id="@+id/kw_player_title"
+    <LinearLayout
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_weight="1"
         android:layout_marginStart="12dp"
-        android:textColor="@android:color/white"
-        android:textSize="16sp"
-        android:textStyle="bold"
-        android:maxLines="1"
-        android:ellipsize="end"/>
+        android:layout_marginEnd="12dp"
+        android:orientation="vertical"
+        android:gravity="center_horizontal">
+
+      <TextView
+          android:id="@+id/kw_player_title"
+          android:layout_width="wrap_content"
+          android:layout_height="wrap_content"
+          android:textColor="@android:color/white"
+          android:textSize="17sp"
+          android:textStyle="bold"
+          android:maxLines="1"
+          android:ellipsize="end"/>
+
+      <TextView
+          android:id="@+id/kw_player_subtitle"
+          android:layout_width="wrap_content"
+          android:layout_height="wrap_content"
+          android:textColor="#B3FFFFFF"
+          android:textSize="13sp"
+          android:maxLines="1"
+          android:ellipsize="end"
+          android:visibility="gone"/>
+
+    </LinearLayout>
 
     <View
         android:id="@+id/exo_media_route_button_placeholder"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:visibility="gone"/>
+
+    <!-- media3's id, but PlayerScreen takes over its click to open the
+         side panel instead of media3's own settings menu. -->
+    <ImageButton
+        android:id="@id/exo_settings"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
+        android:padding="8dp"
+        android:scaleType="fitCenter"
+        android:background="@drawable/kw_circle_button_bg"
+        android:src="@drawable/exo_styled_controls_settings"
+        android:contentDescription="@string/exo_controls_settings_description"/>
   </LinearLayout>
 
 </merge>

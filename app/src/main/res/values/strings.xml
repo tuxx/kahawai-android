@@ -125,6 +125,10 @@
     <string name="player_panel_this_session">This session</string>
     <string name="player_panel_skip_intros">Skip intros &amp; credits</string>
     <string name="player_panel_auto_play_next">Auto-play next episode</string>
+    <string name="player_episodes">Episodes</string>
+    <string name="player_next_episode">Next episode</string>
+    <string name="player_now_playing">Now playing</string>
+    <string name="player_watched">Watched</string>
     <string name="subtitle_origin_embedded">Embedded</string>
     <string name="subtitle_origin_external">External</string>
     <string name="subtitle_origin_downloaded">Downloaded</string>

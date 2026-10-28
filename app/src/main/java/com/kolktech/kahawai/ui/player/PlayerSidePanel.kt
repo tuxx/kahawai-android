@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -66,6 +67,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.SpanStyle
@@ -76,7 +78,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil3.compose.AsyncImage
 import com.kolktech.kahawai.R
+import com.kolktech.kahawai.ui.components.WatchProgressBar
 
 /// A page of the side panel. The panel keeps a stack of these, so a picker
 /// opened from Settings has a back arrow to it, while one opened straight
@@ -86,15 +90,29 @@ internal sealed interface PanelPage {
     data class Tracks(val tab: TracksTab) : PanelPage
     data object Speed : PanelPage
     data object PictureSize : PanelPage
+    data object Episodes : PanelPage
 }
 
 internal enum class TracksTab { Subtitles, Audio }
+
+/// One row of the Episodes page. [season] heads the group it falls in.
+internal data class EpisodeOption(
+    val id: String,
+    val season: String?,
+    val title: String,
+    val artworkUrl: String?,
+    val resumePositionMs: Long?,
+    val resumeDurationMs: Long?,
+    val played: Boolean,
+    val current: Boolean,
+)
 
 /// Everything the panel shows, already resolved to labels. [subtitles]
 /// starts with the "Off" row. A null [autoSkip] means there's nothing to
 /// skip in this item, and a null [autoPlayNext] means there's no next
 /// episode; either way the row is left out.
 internal data class PlayerPanelModel(
+    val episodes: List<EpisodeOption>,
     val subtitles: List<TrackOption>,
     val audio: List<TrackOption>,
     val pictureSizes: List<TrackOption>,
@@ -124,6 +142,7 @@ internal fun PlayerSidePanel(
     onSelectSpeed: (Int) -> Unit,
     onAutoSkipChange: (Boolean) -> Unit,
     onAutoPlayNextChange: (Boolean) -> Unit,
+    onSelectEpisode: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val open = stack.isNotEmpty()
@@ -189,6 +208,7 @@ internal fun PlayerSidePanel(
                             is PanelPage.Tracks -> R.string.player_panel_audio_subtitles
                             PanelPage.Speed -> R.string.player_panel_speed
                             PanelPage.PictureSize -> R.string.player_panel_picture_size
+                            PanelPage.Episodes -> R.string.player_episodes
                         },
                     ),
                     onBack = back.takeIf { shownStack.size > 1 },
@@ -220,6 +240,9 @@ internal fun PlayerSidePanel(
                             model.pictureSizes,
                             onSelect = { onSelectPictureSize(it); afterPick() },
                         )
+                        // Picking one leaves the player for that episode's
+                        // own, so there's nothing to go back to.
+                        PanelPage.Episodes -> EpisodeList(model.episodes, onSelect = { onSelectEpisode(it); close() })
                     }
                 }
             }
@@ -519,6 +542,97 @@ private fun SwitchRow(label: String, checked: Boolean, onCheckedChange: (Boolean
         // The whole row is the toggle (and the focus target), so the
         // switch itself only shows the state.
         Switch(checked = checked, onCheckedChange = null)
+    }
+}
+
+/// The show's episodes under season headings, scrolled to (and, with a
+/// D-pad, focused on) the one playing now.
+@Composable
+private fun EpisodeList(episodes: List<EpisodeOption>, onSelect: (Int) -> Unit) {
+    // Headings interleave with the rows, so the list's own indices aren't
+    // the episodes' — keep both.
+    val entries = remember(episodes) {
+        buildList {
+            var lastSeason: String? = null
+            episodes.forEachIndexed { index, episode ->
+                if (episode.season != null && episode.season != lastSeason) add(episode.season)
+                lastSeason = episode.season
+                add(index)
+            }
+        }
+    }
+    val currentEntry = entries.indexOfFirst { it is Int && episodes[it].current }.coerceAtLeast(0)
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = (currentEntry - 1).coerceAtLeast(0))
+    val focus = rememberInitialFocus()
+    LazyColumn(state = listState, contentPadding = PaddingValues(start = 8.dp, end = 8.dp, bottom = 16.dp)) {
+        itemsIndexed(entries) { entryIndex, entry ->
+            when (entry) {
+                is String -> Box(Modifier.padding(start = 8.dp)) { SectionHeader(entry) }
+                is Int -> EpisodeRow(
+                    episodes[entry],
+                    onClick = { onSelect(entry) },
+                    modifier = if (entryIndex == currentEntry) Modifier.focusRequester(focus) else Modifier,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun EpisodeRow(episode: EpisodeOption, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    PanelRow(
+        onClick = onClick,
+        role = Role.Button,
+        background = if (episode.current) GroupBackground else Color.Transparent,
+        shape = RoundedCornerShape(14.dp),
+        modifier = modifier,
+    ) {
+        Box(
+            Modifier
+                .width(112.dp)
+                .aspectRatio(16f / 9f)
+                .clip(RoundedCornerShape(8.dp))
+                .background(GroupBackground),
+        ) {
+            AsyncImage(
+                model = episode.artworkUrl,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+            WatchProgressBar(
+                positionMs = episode.resumePositionMs,
+                durationMs = episode.resumeDurationMs,
+                played = episode.played,
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                episode.title,
+                color = Color.White,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (episode.current) {
+                Text(
+                    stringResource(R.string.player_now_playing),
+                    color = SecondaryText,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+        if (episode.played) {
+            Spacer(Modifier.width(8.dp))
+            Icon(
+                Icons.Filled.Check,
+                contentDescription = stringResource(R.string.player_watched),
+                tint = SecondaryText,
+                modifier = Modifier.size(18.dp),
+            )
+        }
     }
 }
 

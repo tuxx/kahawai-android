@@ -39,6 +39,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.kolktech.kahawai.R
 import com.kolktech.kahawai.BuildConfig
+import com.kolktech.kahawai.KahawaiApp
 import com.kolktech.kahawai.playback.PlaybackLoadControl
 import com.kolktech.kahawai.data.network.ApiClient
 import com.kolktech.kahawai.data.network.dto.CapabilityProfile
@@ -177,10 +178,21 @@ internal fun resolvePreviousEpisode(
     return if (index > 0) siblings.getOrNull(index - 1)?.id else null
 }
 
-/// Which episodes the player's "<"/">" buttons should offer, resolved
-/// once at start() alongside the title (see [PlayerViewModel.start]).
-/// Both null for a movie/non-episode item — PlayerScreen hides both
-/// buttons entirely in that case rather than showing disabled controls.
+/// The player's top-bar title: `S4:E1 "Pilot"` over the show's name for
+/// an episode, just the title for anything else.
+data class PlayerTitle(val primary: String, val secondary: String? = null)
+
+internal fun playerTitle(kind: String?, title: String, season: Int?, episode: Int?, showTitle: String?): PlayerTitle =
+    if (kind == "episode" && season != null && episode != null) {
+        PlayerTitle("S$season:E$episode \u201C$title\u201D", showTitle?.takeIf { it.isNotBlank() })
+    } else {
+        PlayerTitle(title)
+    }
+
+/// The episodes either side of this one, resolved once at start()
+/// alongside the title (see [PlayerViewModel.start]). [nextId] drives the
+/// controller's Next episode button, hidden entirely when it's null (a
+/// movie, or the show's last episode) rather than shown disabled.
 internal data class AdjacentEpisodes(val previousId: String?, val nextId: String?)
 
 /// See [PlayerViewModel.syncOrigin]. [correctedOffsetMs] is the hub's
@@ -480,8 +492,13 @@ class PlayerViewModel(
     /// in the player's top bar — best-effort, same as the subtitle track
     /// list, so a failed lookup just leaves the title blank rather than
     /// failing playback.
-    private val _title = MutableStateFlow<String?>(null)
-    val title: StateFlow<String?> = _title
+    private val _title = MutableStateFlow<PlayerTitle?>(null)
+    val title: StateFlow<PlayerTitle?> = _title
+
+    /// The whole show's episodes, in order (see [resolveNextEpisode]), for
+    /// the side panel's episode list. Empty for anything but an episode.
+    private val _episodes = MutableStateFlow<List<Item>>(emptyList())
+    val episodes: StateFlow<List<Item>> = _episodes
 
     private val playbackAllocator = DefaultAllocator(true, C.DEFAULT_BUFFER_SEGMENT_SIZE)
     private val playbackLoadControl = PlaybackLoadControl(Runtime.getRuntime().maxMemory(), playbackAllocator)
@@ -501,6 +518,15 @@ class PlayerViewModel(
             // when focus is returned, without us wiring up an AudioManager
             // listener by hand.
             .setAudioAttributes(AudioAttributes.DEFAULT, /* handleAudioFocus= */ true)
+            // What the controller's rewind/forward buttons step by (and
+            // label themselves with), from Settings > Player > Seeking —
+            // the same increments the double-tap gesture uses.
+            .apply {
+                (application as? KahawaiApp)?.appSettingsStore?.let { settings ->
+                    setSeekBackIncrementMs(settings.seekBackMs)
+                    setSeekForwardIncrementMs(settings.seekForwardMs)
+                }
+            }
             .build()
             .apply {
                 if (BuildConfig.DEBUG) {
@@ -891,15 +917,11 @@ class PlayerViewModel(
         viewModelScope.launch {
             try {
                 val detail = catalogRepo.item(libraryId, itemId)
-                _title.value = if (detail.kind == "episode" && detail.season != null && detail.episode != null) {
-                    val seasonEpisode = "S%02dE%02d".format(detail.season, detail.episode)
-                    listOfNotNull(seasonEpisode, detail.title, detail.parentTitle).joinToString(" - ")
-                } else {
-                    detail.title
-                }
+                _title.value = playerTitle(detail.kind, detail.title, detail.season, detail.episode, detail.parentTitle)
                 val parentId = detail.parentId
                 if (detail.kind == "episode" && parentId != null) {
                     val siblings = catalogRepo.children(libraryId, parentId)
+                    _episodes.value = siblings
                     _adjacentEpisodes.value = AdjacentEpisodes(
                         previousId = resolvePreviousEpisode(detail.kind, parentId, itemId, siblings),
                         nextId = resolveNextEpisode(detail.kind, parentId, itemId, siblings),
