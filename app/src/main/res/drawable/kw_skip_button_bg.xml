@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The skip / next-episode pill (kw_skip): white, with a white ring
+     around it while D-pad focused. The pill is inset by the ring's room in
+     every state so focusing it doesn't change its size. Matches the
+     Compose pill PlayerScreen draws while the controls are hidden. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_focused="true">
+        <layer-list>
+            <item>
+                <shape android:shape="rectangle">
+                    <corners android:radius="26dp" />
+                    <stroke android:width="2dp" android:color="#FFFFFFFF" />
+                </shape>
+            </item>
+            <item android:top="5dp" android:bottom="5dp" android:left="5dp" android:right="5dp">
+                <shape android:shape="rectangle">
+                    <corners android:radius="21dp" />
+                    <solid android:color="#FFFFFFFF" />
+                </shape>
+            </item>
+        </layer-list>
+    </item>
+    <item android:state_pressed="true">
+        <inset android:inset="5dp">
+            <shape android:shape="rectangle">
+                <corners android:radius="21dp" />
+                <solid android:color="#D9FFFFFF" />
+            </shape>
+        </inset>
+    </item>
+    <item>
+        <inset android:inset="5dp">
+            <shape android:shape="rectangle">
+                <corners android:radius="21dp" />
+                <solid android:color="#F2FFFFFF" />
+            </shape>
+        </inset>
+    </item>
+</selector>

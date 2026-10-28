@@ -381,6 +381,49 @@ internal fun skipTargetMs(segment: Segment, durationMs: Long): Long {
     return end.coerceAtLeast(0)
 }
 
+/// How long before the end an episode without a credits segment starts
+/// offering the next one.
+internal const val NEXT_EPISODE_OFFER_MS = 30_000L
+
+/// Credits ending further than this from the file's end are followed by
+/// something worth staying for (a post-credits scene), so they get a plain
+/// "Skip credits" rather than a jump to the next episode.
+internal const val CREDITS_TO_END_MAX_MS = 60_000L
+
+/// What the player's skip button offers right now: a seek past a segment
+/// ([targetMs]) or the next episode ([nextEpisodeId]). [startMs] is where
+/// the offer began, which identifies it for the auto-hide timer.
+internal data class SkipOffer(
+    val labelRes: Int,
+    val startMs: Long,
+    val targetMs: Long? = null,
+    val nextEpisodeId: String? = null,
+) {
+    val isNextEpisode: Boolean get() = nextEpisodeId != null
+}
+
+internal fun skipOffer(
+    segments: List<Segment>,
+    posMs: Long,
+    durationMs: Long,
+    nextEpisodeId: String?,
+): SkipOffer? {
+    val known = durationMs > 0
+    val segment = skippableSegment(segments, posMs)
+    if (segment != null) {
+        val creditsRunToEnd = known && durationMs - segment.endMs <= CREDITS_TO_END_MAX_MS
+        return if (segment.kind == "credits" && nextEpisodeId != null && creditsRunToEnd) {
+            SkipOffer(R.string.player_next_episode, segment.startMs, nextEpisodeId = nextEpisodeId)
+        } else {
+            SkipOffer(SKIP_LABELS.getValue(segment.kind), segment.startMs, targetMs = skipTargetMs(segment, durationMs))
+        }
+    }
+    if (nextEpisodeId != null && known && posMs < durationMs && durationMs - posMs <= NEXT_EPISODE_OFFER_MS) {
+        return SkipOffer(R.string.player_next_episode, durationMs - NEXT_EPISODE_OFFER_MS, nextEpisodeId = nextEpisodeId)
+    }
+    return null
+}
+
 /// Chapter marks to draw on the seek bar, in the shape
 /// [DefaultTimeBar.setAdGroupTimesMs] wants: a chapter at zero is
 /// dropped (every file has one and it marks the left edge, where

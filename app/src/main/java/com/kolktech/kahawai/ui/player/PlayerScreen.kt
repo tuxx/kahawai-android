@@ -22,19 +22,25 @@ import android.view.ScaleGestureDetector
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
+
 import android.widget.ImageButton
 import android.widget.TextView
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
@@ -57,9 +63,6 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -186,6 +189,9 @@ private val OK_KEYS = setOf(
     KeyEvent.KEYCODE_ENTER,
     KeyEvent.KEYCODE_NUMPAD_ENTER,
 )
+
+/// How long the floating skip pill waits to be taken before hiding.
+private const val SKIP_OFFER_VISIBLE_MS = 10_000
 
 /// Below this width the bottom row's actions drop their labels.
 private const val ACTION_LABELS_MIN_WIDTH_DP = 600
@@ -561,9 +567,13 @@ private fun PlayerContent(
     // handling below) so the OK-key handler can check it: the skip
     // button, when it's up, must win the OK/enter press over the normal
     // play/pause toggle.
+    // The next episode's id also drives the end-of-episode "Next episode"
+    // offer, so the position is polled whenever there's one of those too.
+    val adjacentEpisodes by viewModel.adjacentEpisodes.collectAsState()
+    val nextEpisodeId = adjacentEpisodes?.nextId
     var skipCheckPosMs by remember { mutableLongStateOf(0L) }
-    LaunchedEffect(segments) {
-        if (segments.isEmpty()) return@LaunchedEffect
+    LaunchedEffect(segments, nextEpisodeId) {
+        if (segments.isEmpty() && nextEpisodeId == null) return@LaunchedEffect
         while (true) {
             skipCheckPosMs = viewModel.player.currentPosition
             delay(300)
@@ -585,11 +595,44 @@ private fun PlayerContent(
         }
     }
 
-    // Mirrors the render condition below (the Skip button itself): true
-    // exactly when that button is on screen and able to take the OK key.
-    // The panel hides it: on TV it would steal focus from the panel's rows.
-    val skipButtonVisible = !isInPip && !panelOpen && !autoSkipEnabled && skippingSegment != null && skipLabelRes(skippingSegment) != null
-    val skipButtonVisibleState = rememberUpdatedState(skipButtonVisible)
+    // What the skip button offers now (see skipOffer): past a segment, or
+    // on to the next episode. Auto-skip takes segment offers itself (the
+    // effect above has already seeked), so only Next episode is left to
+    // offer then.
+    val offer = remember(segments, skipCheckPosMs, nextEpisodeId, autoSkipEnabled) {
+        skipOffer(segments, skipCheckPosMs, viewModel.player.duration, nextEpisodeId)
+            ?.takeIf { it.isNextEpisode || !autoSkipEnabled }
+    }
+
+    // The floating pill hides itself SKIP_OFFER_VISIBLE_MS into an offer
+    // nobody took, counting down in its fill; the controller's copy
+    // (kw_skip) stays for the whole offer, so it's never more than a tap
+    // or a D-pad press away. Leaving the offer (a seek back out of the
+    // segment) resets it, so coming back into it offers it afresh.
+    var expiredOfferStartMs by remember { mutableStateOf<Long?>(null) }
+    val skipCountdown = remember(offer?.startMs) { Animatable(1f) }
+    LaunchedEffect(offer?.startMs) {
+        val start = offer?.startMs
+        if (start == null) {
+            expiredOfferStartMs = null
+            return@LaunchedEffect
+        }
+        skipCountdown.animateTo(0f, tween(SKIP_OFFER_VISIBLE_MS, easing = LinearEasing))
+        expiredOfferStartMs = start
+    }
+    // Under the panel there's nothing to take it with, and with the
+    // controls up their own copy is the one showing.
+    val floatingOffer = offer?.takeIf { it.startMs != expiredOfferStartMs && !isInPip && !panelOpen && !controlsShown }
+    val floatingOfferState = rememberUpdatedState(floatingOffer)
+
+    fun takeSkipOffer(taken: SkipOffer) {
+        val nextId = taken.nextEpisodeId
+        if (nextId != null) {
+            onNextEpisode(nextId, viewModel.selectedSubtitleTrack.value?.id)
+        } else {
+            taken.targetMs?.let { viewModel.player.seekTo(it) }
+        }
+    }
 
     // Remote keys, routed straight from the activity (see
     // MainActivity.onPlayerKey). PlayerView already knows what to do with
@@ -617,20 +660,22 @@ private fun PlayerContent(
                         if (event.action == KeyEvent.ACTION_DOWN) view.showController()
                         true
                     }
-                    // OK/enter with the controls hidden toggles play/pause
-                    // in place - once the controls are up, OK reaches the
-                    // (focused) play/pause button itself and this branch
-                    // is skipped. A resulting pause surfaces the controls
-                    // anyway (see the isPaused effect below, which reacts
-                    // to the player state this produces rather than being
-                    // told to show them here). Same deal when the Skip
-                    // button is up: it already holds D-pad focus (see
-                    // skipButtonFocusRequester below), so OK must fall
-                    // through to normal dispatch and land on it instead of
-                    // pausing underneath it.
-                    event.keyCode in OK_KEYS && !view.isControllerFullyVisible && !skipButtonVisibleState.value -> {
+                    // OK/enter with the controls hidden takes the skip
+                    // offer while its pill is floating, and otherwise
+                    // toggles play/pause in place - once the controls are
+                    // up, OK reaches the focused button itself and this
+                    // branch is skipped. A resulting pause surfaces the
+                    // controls anyway (see the isPaused effect below,
+                    // which reacts to the player state this produces
+                    // rather than being told to show them here).
+                    event.keyCode in OK_KEYS && !view.isControllerFullyVisible -> {
                         if (event.action == KeyEvent.ACTION_DOWN) {
-                            if (viewModel.player.isPlaying) viewModel.player.pause() else viewModel.player.play()
+                            val floating = floatingOfferState.value
+                            when {
+                                floating != null -> takeSkipOffer(floating)
+                                viewModel.player.isPlaying -> viewModel.player.pause()
+                                else -> viewModel.player.play()
+                            }
                         }
                         true
                     }
@@ -1065,7 +1110,10 @@ private fun PlayerContent(
                         PlayerView.ControllerVisibilityListener { visibility ->
                             controlsShown = visibility == View.VISIBLE
                             if (visibility == View.VISIBLE) {
-                                findViewById<ImageButton>(androidx.media3.ui.R.id.exo_play_pause)?.requestFocus()
+                                // A skip offer, while there is one, is the
+                                // likeliest reason to have brought them up.
+                                val skip = findViewById<View>(R.id.kw_skip)?.takeIf { it.isVisible }
+                                (skip ?: findViewById<ImageButton>(androidx.media3.ui.R.id.exo_play_pause))?.requestFocus()
                                     ?: requestFocus()
                             }
                         },
@@ -1143,7 +1191,6 @@ private fun PlayerContent(
             playerView?.let { applyCueBottomPadding(it, cueInsetPx) }
         }
 
-
         val activeSession = subtitleSession
         if (activeSession != null) {
             when (selectedSubtitle?.delivery) {
@@ -1219,7 +1266,6 @@ private fun PlayerContent(
         // leaves the button hidden rather than shown-but-useless.
         // subtitleTrack id rides along so the next episode opens with the
         // same language already selected.
-        val adjacentEpisodes by viewModel.adjacentEpisodes.collectAsState()
         val episodes by viewModel.episodes.collectAsState()
         LaunchedEffect(adjacentEpisodes, episodes, playerView) {
             val nextId = adjacentEpisodes?.nextId
@@ -1287,43 +1333,43 @@ private fun PlayerContent(
             }
         }
 
-        // HUB-37. Bottom-end, clear of the transport, in its own corner
-        // regardless of whether the controls happen to be showing — an
-        // offer the viewer can act on any time, not just while they're
-        // interacting with the controller. Never drawn while auto-skip
-        // is on: at that point the LaunchedEffect above has already
-        // fired the seek, and a button that would show for a stray 300ms
-        // frame before the seek lands is just a flicker, not an offer.
-        val skipLabelResId = skipLabelRes(skippingSegment)
-        if (skipButtonVisible && skipLabelResId != null) {
-            // Grabbing focus is only useful with a d-pad: on TV there's no
-            // pointer to click the button with, so unless it's focused a
-            // d-pad press has nothing to act on and the offer is dead.
-            // The OK-key handler above defers to this focus too, so the
-            // button — not play/pause — is always what an OK press hits
-            // while it's up.
-            val skipButtonFocusRequester = remember { FocusRequester() }
-            var skipButtonFocused by remember { mutableStateOf(false) }
-            if (isTv) {
-                LaunchedEffect(Unit) { skipButtonFocusRequester.requestFocus() }
+        // HUB-37. The controller's copy of the skip offer (kw_skip): a real
+        // controller child, so the D-pad reaches it like any other button
+        // while the controls are up (and lands on it first — see the
+        // ControllerVisibilityListener). Focus moves to play/pause before
+        // it goes, rather than being dropped with it.
+        LaunchedEffect(offer, playerView) {
+            val view = playerView ?: return@LaunchedEffect
+            view.findViewById<TextView>(R.id.kw_skip)?.apply {
+                if (offer == null) {
+                    if (hasFocus()) view.findViewById<View>(androidx.media3.ui.R.id.exo_play_pause)?.requestFocus()
+                    isVisible = false
+                } else {
+                    text = context.getString(offer.labelRes)
+                    setCompoundDrawablesRelativeWithIntrinsicBounds(skipOfferIcon(offer), 0, 0, 0)
+                    setOnClickListener { takeSkipOffer(offer) }
+                    isVisible = true
+                }
             }
-            Button(
-                onClick = {
-                    val segment = skippingSegment
-                    viewModel.player.seekTo(skipTargetMs(segment, viewModel.player.duration))
-                },
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 16.dp, bottom = 96.dp)
-                    .focusRequester(skipButtonFocusRequester)
-                    .onFocusChanged { skipButtonFocused = it.isFocused }
-                    .border(
-                        width = if (skipButtonFocused) 3.dp else 0.dp,
-                        color = MaterialTheme.colorScheme.primary,
-                        shape = ButtonDefaults.shape,
-                    ),
-            ) {
-                Text(stringResource(skipLabelResId))
+        }
+
+        // ...and the floating one, at the same spot (kw_skip's margins
+        // less its focus-ring inset), while the controls are hidden.
+        var lastFloatingOffer by remember { mutableStateOf<SkipOffer?>(null) }
+        if (floatingOffer != null) lastFloatingOffer = floatingOffer
+        AnimatedVisibility(
+            visible = floatingOffer != null,
+            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = 108.dp),
+            enter = fadeIn() + slideInHorizontally { it / 2 },
+            exit = fadeOut(),
+        ) {
+            lastFloatingOffer?.let { shown ->
+                SkipPill(
+                    label = stringResource(shown.labelRes),
+                    icon = skipOfferIcon(shown),
+                    remaining = { skipCountdown.value },
+                    onClick = { takeSkipOffer(shown) },
+                )
             }
         }
 

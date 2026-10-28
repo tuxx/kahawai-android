@@ -495,4 +495,37 @@ class PlayerViewModelLogicTest {
         // An episode missing its numbering can't say S?:E?.
         assertEquals(PlayerTitle("Pilot"), playerTitle("episode", "Pilot", null, 1, "Show"))
     }
+
+    @Test
+    fun `a segment offers a skip to its end`() {
+        val offer = skipOffer(listOf(segment("intro", 60_000, 120_000)), 70_000, 2_400_000, nextEpisodeId = "e2")
+        assertEquals(SkipOffer(R.string.player_skip_intro, 60_000, targetMs = 120_000), offer)
+    }
+
+    @Test
+    fun `credits running to the end offer the next episode instead`() {
+        val offer = skipOffer(listOf(segment("credits", 2_300_000, 2_390_000)), 2_310_000, 2_400_000, nextEpisodeId = "e2")
+        assertEquals(SkipOffer(R.string.player_next_episode, 2_300_000, nextEpisodeId = "e2"), offer)
+    }
+
+    @Test
+    fun `credits with a scene after them, or no next episode, stay a skip`() {
+        val midCredits = listOf(segment("credits", 2_000_000, 2_100_000))
+        assertEquals(R.string.player_skip_credits, skipOffer(midCredits, 2_050_000, 2_400_000, "e2")?.labelRes)
+        val endCredits = listOf(segment("credits", 2_300_000, 2_390_000))
+        assertEquals(R.string.player_skip_credits, skipOffer(endCredits, 2_310_000, 2_400_000, null)?.labelRes)
+    }
+
+    @Test
+    fun `without credits the next episode is offered for the last 30 seconds`() {
+        assertNull(skipOffer(emptyList(), 2_369_000, 2_400_000, "e2"))
+        assertEquals(
+            SkipOffer(R.string.player_next_episode, 2_370_000, nextEpisodeId = "e2"),
+            skipOffer(emptyList(), 2_380_000, 2_400_000, "e2"),
+        )
+        // The offer's identity doesn't move as the playhead does.
+        assertEquals(2_370_000L, skipOffer(emptyList(), 2_395_000, 2_400_000, "e2")?.startMs)
+        assertNull(skipOffer(emptyList(), 2_380_000, 2_400_000, null))
+        assertNull(skipOffer(emptyList(), 2_380_000, C.TIME_UNSET, "e2"))
+    }
 }

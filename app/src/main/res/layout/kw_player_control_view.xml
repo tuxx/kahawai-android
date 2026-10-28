@@ -195,6 +195,19 @@
 
   </LinearLayout>
 
+  <!-- Skip recap/intro/credits, or Next episode: the controller's copy of
+       the pill PlayerScreen floats over the video while the controls are
+       hidden, at the same spot, so it's a real controller child the D-pad
+       can reach (and lands on first) for as long as the offer lasts.
+       PlayerScreen sets its label, icon, visibility and click. Its bottom
+       margin clears the seek bar: progress margin + height + 8dp. -->
+  <Button android:id="@+id/kw_skip"
+      style="@style/KwPlayerSkip"
+      android:layout_gravity="bottom|end"
+      android:layout_marginEnd="19dp"
+      android:layout_marginBottom="103dp"
+      android:visibility="gone"/>
+
   <LinearLayout android:id="@id/exo_minimal_controls"
       android:layout_width="wrap_content"
       android:layout_height="wrap_content"
