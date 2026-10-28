@@ -466,6 +466,16 @@ class PlayerViewModel(
     private val _playbackFinished = MutableStateFlow(false)
     val playbackFinished: StateFlow<Boolean> = _playbackFinished
 
+    /// The side panel's "Auto-play next episode" switch. For this session
+    /// only: switched off, the end of an episode leaves the player the way
+    /// the end of a movie does instead of opening the next one.
+    private val _autoPlayNext = MutableStateFlow(true)
+    val autoPlayNext: StateFlow<Boolean> = _autoPlayNext
+
+    fun setAutoPlayNext(enabled: Boolean) {
+        _autoPlayNext.value = enabled
+    }
+
     /// Resolved alongside session start (see start()) purely for display
     /// in the player's top bar — best-effort, same as the subtitle track
     /// list, so a failed lookup just leaves the title blank rather than
@@ -1182,6 +1192,10 @@ class PlayerViewModel(
         if (playbackEndedHandled) return
         playbackEndedHandled = true
         progressJob?.cancel()
+        if (!_autoPlayNext.value) {
+            _playbackFinished.value = true
+            return
+        }
         viewModelScope.launch {
             try {
                 val detail = catalogRepo.item(libraryId, itemId)

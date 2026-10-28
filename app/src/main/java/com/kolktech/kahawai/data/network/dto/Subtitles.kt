@@ -85,6 +85,12 @@ data class SubtitleDownloadResponse(
     val quota: Quota = Quota(),
 )
 
+/// "English" for "en" or "eng"; null when the code is missing or resolves
+/// to nothing better than itself ("und", made-up tags).
+fun languageDisplayName(code: String?): String? = code
+    ?.let { runCatching { Locale.forLanguageTag(it).getDisplayLanguage(Locale.ENGLISH) }.getOrNull() }
+    ?.takeIf { it.isNotBlank() && !it.equals(code, ignoreCase = true) }
+
 /// "English", not "en" — the hub only sends the raw ISO code, so the full
 /// name is resolved on-device. `label` (a downloaded track's provider
 /// release name, e.g. "SDH"/"Forced") and `note` (a technical delivery
@@ -92,10 +98,7 @@ data class SubtitleDownloadResponse(
 /// present. Shared by every subtitle picker (Detail screen, the player's
 /// CC menu) so they read the same everywhere.
 fun SubtitleTrack.displayLabel(): String {
-    val languageName = language
-        ?.let { code -> runCatching { Locale.forLanguageTag(code).getDisplayLanguage(Locale.ENGLISH) }.getOrNull() }
-        ?.takeIf { it.isNotBlank() && !it.equals(language, ignoreCase = true) }
-    val base = listOfNotNull(languageName ?: language, label?.takeIf { it.isNotBlank() })
+    val base = listOfNotNull(languageDisplayName(language) ?: language, label?.takeIf { it.isNotBlank() })
         .joinToString(" ")
         .ifBlank { format.uppercase() }
     return if (note.isNotBlank()) "$base ($note)" else base

@@ -23,7 +23,6 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.widget.ImageButton
-import android.widget.PopupMenu
 import android.widget.TextView
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
@@ -80,9 +79,10 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.media3.common.C
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
-import androidx.media3.common.TrackGroup
 import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -91,8 +91,7 @@ import androidx.media3.ui.DefaultTrackNameProvider
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.SubtitleView
 import com.kolktech.kahawai.R
-import com.kolktech.kahawai.data.network.dto.SubtitleTrack
-import com.kolktech.kahawai.data.network.dto.displayLabel
+import com.kolktech.kahawai.data.network.dto.languageDisplayName
 import com.kolktech.kahawai.data.repository.PlaybackRepository
 import com.kolktech.kahawai.data.settings.AppSettingsStore
 import com.kolktech.kahawai.ui.MainActivity
@@ -444,9 +443,35 @@ private fun PlayerContent(
     val snackbarHostState = remember { SnackbarHostState() }
     val segments by viewModel.segments.collectAsState()
     val chapters by viewModel.chapters.collectAsState()
-    // Read once, same as the gesture toggles above: not a value that
-    // should change out from under an already-open player.
-    val autoSkipEnabled = remember { appSettingsStore.autoSkipIntrosOutros }
+    // Starts from the setting, but the side panel can flip it for the
+    // rest of this session without touching the stored preference.
+    var autoSkipEnabled by remember { mutableStateOf(appSettingsStore.autoSkipIntrosOutros) }
+    val autoPlayNext by viewModel.autoPlayNext.collectAsState()
+
+    // Side panel pages, top last; empty while it's closed (see
+    // PlayerSidePanel). Read from the key routing below, hence the
+    // updated-state copy.
+    var panelStack by remember { mutableStateOf<List<PanelPage>>(emptyList()) }
+    val panelOpen = panelStack.isNotEmpty()
+    val panelOpenState = rememberUpdatedState(panelOpen)
+
+    // The panel lists tracks and shows the speed, neither of which the
+    // player publishes as state of its own.
+    var currentTracks by remember { mutableStateOf(viewModel.player.currentTracks) }
+    var playbackSpeed by remember { mutableFloatStateOf(viewModel.player.playbackParameters.speed) }
+    DisposableEffect(viewModel) {
+        val listener = object : Player.Listener {
+            override fun onTracksChanged(tracks: Tracks) {
+                currentTracks = tracks
+            }
+
+            override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) {
+                playbackSpeed = playbackParameters.speed
+            }
+        }
+        viewModel.player.addListener(listener)
+        onDispose { viewModel.player.removeListener(listener) }
+    }
 
     // TV remote back handling: a first press reveals the controls, a
     // press while they're up dismisses them (playback continues), and
@@ -553,7 +578,8 @@ private fun PlayerContent(
 
     // Mirrors the render condition below (the Skip button itself): true
     // exactly when that button is on screen and able to take the OK key.
-    val skipButtonVisible = !isInPip && !autoSkipEnabled && skippingSegment != null && skipLabelRes(skippingSegment) != null
+    // The panel hides it: on TV it would steal focus from the panel's rows.
+    val skipButtonVisible = !isInPip && !panelOpen && !autoSkipEnabled && skippingSegment != null && skipLabelRes(skippingSegment) != null
     val skipButtonVisibleState = rememberUpdatedState(skipButtonVisible)
 
     // Remote keys, routed straight from the activity (see
@@ -569,10 +595,13 @@ private fun PlayerContent(
         } else {
             mainActivity.onPlayerKey = { event ->
                 when {
+                    // The side panel is Compose and takes the D-pad itself.
+                    panelOpenState.value && (event.keyCode in DPAD_KEYS || event.keyCode in OK_KEYS) -> false
                     view.dispatchMediaKeyEvent(event) -> {
                         // Flash the controls up so ff/rew has a timebar to
-                        // aim by - except in PiP, whose window has its own.
-                        if (!mainActivity.isInPictureInPictureMode) view.showController()
+                        // aim by - except in PiP, whose window has its own,
+                        // and under the side panel.
+                        if (!mainActivity.isInPictureInPictureMode && !panelOpenState.value) view.showController()
                         true
                     }
                     event.keyCode in DPAD_KEYS && !view.isControllerFullyVisible -> {
@@ -615,7 +644,10 @@ private fun PlayerContent(
             }
             mainActivity.pipModeListener = { inPip ->
                 isInPip = inPip
-                if (inPip) playerView?.hideController()
+                if (inPip) {
+                    playerView?.hideController()
+                    panelStack = emptyList()
+                }
             }
             // Keep the registered params fresh so Android 12+'s auto-enter
             // has the right aspect ratio on hand and only triggers while
@@ -749,195 +781,46 @@ private fun PlayerContent(
         flash(GestureIndicator.Volume(value))
     }
 
-    // Anchored popup, same style as the resize/speed menus below, instead
-    // of TrackSelectionDialogBuilder's modal AlertDialog. Reached through
-    // the settings gear menu — portrait screens don't have bottom-bar
-    // width for a dedicated audio button.
-    /// A remux/transcode session only ever exposes the single audio stream
-    /// the hub muxed, so ExoPlayer's own track list has nothing to offer.
-    /// The hub's per-source list is what the viewer actually has to choose
-    /// from there, and picking one restarts the pipeline
-    /// (PlayerViewModel.selectAudioTrackIndex).
-    fun showHubAudioTrackMenu(menuContext: Context, anchor: View) {
-        val streams = viewModel.negotiatedAudio()
-        if (streams.size < 2) return
-        PopupMenu(menuContext, anchor).apply {
-            streams.forEachIndexed { index, stream ->
-                val channels = when (stream.channels) {
-                    1 -> menuContext.getString(R.string.channels_mono)
-                    2 -> menuContext.getString(R.string.channels_stereo)
-                    6 -> "5.1"
-                    8 -> "7.1"
-                    else -> null
-                }
-                val label = listOfNotNull(
-                    stream.language?.uppercase(),
-                    stream.codec.uppercase(),
-                    channels,
-                ).joinToString(" · ")
-                menu.add(0, index, index, label)
-            }
-            menu.setGroupCheckable(0, true, true)
-            menu.findItem(viewModel.currentAudioTrack)?.isChecked = true
-            setOnMenuItemClickListener { item ->
-                viewModel.selectAudioTrackIndex(item.itemId)
-                true
-            }
-        }.show()
-    }
+    // Picks made in the side panel (PlayerSidePanel). A remux/transcode
+    // session only ever exposes the single audio stream the hub muxed, so
+    // ExoPlayer's own track list has nothing to offer there: the hub's
+    // per-source list is what the viewer actually has to choose from, and
+    // picking one restarts the pipeline (PlayerViewModel.selectAudioTrackIndex).
+    // A direct session plays the file itself, so its own tracks are the choice.
+    fun directAudioTracks(): List<Pair<Tracks.Group, Int>> =
+        currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }.flatMap { group ->
+            (0 until group.length).filter { group.isTrackSupported(it) }.map { group to it }
+        }
 
-    fun showAudioTrackMenu(menuContext: Context, anchor: View) {
+    fun selectAudio(index: Int) {
         if (!viewModel.isDirect) {
-            showHubAudioTrackMenu(menuContext, anchor)
+            if (index != viewModel.currentAudioTrack) viewModel.selectAudioTrackIndex(index)
             return
         }
-        val groups = viewModel.player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
-        if (groups.isEmpty()) return
-        val nameProvider = DefaultTrackNameProvider(menuContext.resources)
-        val overrides = viewModel.player.trackSelectionParameters.overrides
-        val hasAudioOverride = overrides.values.any { it.type == C.TRACK_TYPE_AUDIO }
-        PopupMenu(menuContext, anchor).apply {
-            val selectionForItem = mutableMapOf<Int, Pair<TrackGroup, Int>?>()
-            var itemId = 0
-            var checkedItemId = if (hasAudioOverride) -1 else 0
-            menu.add(0, itemId, itemId, menuContext.getString(R.string.default_label))
-            selectionForItem[itemId] = null
-            itemId++
-            groups.forEach { group ->
-                for (trackIndex in 0 until group.length) {
-                    if (!group.isTrackSupported(trackIndex)) continue
-                    menu.add(0, itemId, itemId, nameProvider.getTrackName(group.getTrackFormat(trackIndex)))
-                    selectionForItem[itemId] = group.mediaTrackGroup to trackIndex
-                    if (overrides[group.mediaTrackGroup]?.trackIndices?.contains(trackIndex) == true) {
-                        checkedItemId = itemId
-                    }
-                    itemId++
-                }
-            }
-            menu.setGroupCheckable(0, true, true)
-            menu.findItem(checkedItemId)?.isChecked = true
-            setOnMenuItemClickListener { item ->
-                val selection = selectionForItem[item.itemId]
-                val params = viewModel.player.trackSelectionParameters.buildUpon()
-                    .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
-                if (selection != null) params.addOverride(TrackSelectionOverride(selection.first, selection.second))
-                viewModel.player.trackSelectionParameters = params.build()
-                // Remembered for the rest of the series (HUB-33), by the
-                // language the chosen format declares — see
-                // PlayerViewModel.rememberAudioLanguage.
-                selection?.let { (group, trackIndex) ->
-                    viewModel.rememberAudioLanguage(group.getFormat(trackIndex).language)
-                }
-                true
-            }
-        }.show()
+        val (group, trackIndex) = directAudioTracks().getOrNull(index) ?: return
+        if (group.isTrackSelected(trackIndex)) return
+        viewModel.player.trackSelectionParameters = viewModel.player.trackSelectionParameters.buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+            .addOverride(TrackSelectionOverride(group.mediaTrackGroup, trackIndex))
+            .build()
+        // Remembered for the rest of the series (HUB-33), by the language
+        // the chosen format declares — see PlayerViewModel.rememberAudioLanguage.
+        viewModel.rememberAudioLanguage(group.getTrackFormat(trackIndex).language)
     }
 
-    // Sourced from the hub's own track+delivery list (viewModel.subtitleTracks),
-    // not player.currentTracks.groups — Ass/Overlay delivery never
-    // becomes an ExoPlayer text track at all, only Text delivery does.
-    fun showSubtitleTrackMenu(menuContext: Context, anchor: View) {
-        val tracks = viewModel.subtitleTracks.value
-        val selected = viewModel.selectedSubtitleTrack.value
-        PopupMenu(menuContext, anchor).apply {
-            val trackForItem = mutableMapOf<Int, SubtitleTrack?>()
-            var itemId = 0
-            var checkedItemId = if (selected == null) 0 else -1
-            menu.add(0, itemId, itemId, menuContext.getString(R.string.subtitle_off))
-            trackForItem[itemId] = null
-            itemId++
-            tracks.forEach { track ->
-                val menuItem = menu.add(0, itemId, itemId, track.displayLabel())
-                // Burn restarts the session with a forced video encode and
-                // "none" can't be served at all — offer them but don't
-                // pretend they're a free client-side switch like the rest.
-                menuItem.isEnabled = track.delivery != "none"
-                if (track.id == selected?.id) checkedItemId = itemId
-                trackForItem[itemId] = track
-                itemId++
-            }
-            menu.setGroupCheckable(0, true, true)
-            menu.findItem(checkedItemId)?.isChecked = true
-            setOnMenuItemClickListener { item ->
-                if (trackForItem.containsKey(item.itemId)) {
-                    viewModel.selectSubtitleTrack(trackForItem[item.itemId])
-                }
-                true
-            }
-        }.show()
+    // Index 0 is the panel's "Off" row; the rest follow the hub's own
+    // track+delivery list (viewModel.subtitleTracks), not
+    // player.currentTracks.groups — Ass/Overlay delivery never becomes an
+    // ExoPlayer text track at all, only Text delivery does.
+    fun selectSubtitle(index: Int) {
+        val track = if (index == 0) null else subtitleTracks.getOrNull(index - 1) ?: return
+        if (track?.id != selectedSubtitle?.id) viewModel.selectSubtitleTrack(track)
     }
 
-    fun showResizeMenu(menuContext: Context, anchor: View) {
-        PopupMenu(menuContext, anchor).apply {
-            RESIZE_MODES.forEachIndexed { index, (_, labelRes) -> menu.add(0, index, index, menuContext.getString(labelRes)) }
-            menu.setGroupCheckable(0, true, true)
-            menu.findItem(resizeModeIndex)?.isChecked = true
-            setOnMenuItemClickListener { item ->
-                applyResize(item.itemId)
-                flash(GestureIndicator.Resize(menuContext.getString(RESIZE_MODES[item.itemId].second)))
-                true
-            }
-        }.show()
-    }
-
-    fun showSpeedMenu(menuContext: Context, anchor: View) {
-        PopupMenu(menuContext, anchor).apply {
-            PLAYBACK_SPEEDS.forEachIndexed { index, speed -> menu.add(0, index, index, "${speed}x") }
-            menu.setGroupCheckable(0, true, true)
-            PLAYBACK_SPEEDS.indexOfFirst { it == viewModel.player.playbackParameters.speed }
-                .takeIf { it >= 0 }
-                ?.let { menu.findItem(it)?.isChecked = true }
-            setOnMenuItemClickListener { item ->
-                viewModel.player.setPlaybackSpeed(PLAYBACK_SPEEDS[item.itemId])
-                true
-            }
-        }.show()
-    }
-
-    // Media3's settings gear menu (speed / audio track) is built by a
-    // private, non-extensible adapter inside PlayerControlView, so there's
-    // no public way to add a "video aspect" row into it. We take over the
-    // gear button's click entirely and show our own two-level menu instead,
-    // covering what the native one offered (speed / audio track) plus
-    // resize mode. Each row shows its current value so the state is
-    // visible without opening the submenu.
-    fun showSettingsMenu(menuContext: Context, anchor: View) {
-        val speed = viewModel.player.playbackParameters.speed
-        val nameProvider = DefaultTrackNameProvider(menuContext.resources)
-        val audioGroups = viewModel.player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
-        val currentAudio = audioGroups.firstNotNullOfOrNull { group ->
-            (0 until group.length).firstOrNull { group.isTrackSelected(it) }
-                ?.let { nameProvider.getTrackName(group.getTrackFormat(it)) }
-        }
-        PopupMenu(menuContext, anchor).apply {
-            menu.add(0, 0, 0, menuContext.getString(R.string.player_settings_video, menuContext.getString(RESIZE_MODES[resizeModeIndex].second)))
-            menu.add(0, 1, 1, menuContext.getString(R.string.player_settings_speed, "${speed}x"))
-            val hubAudio = viewModel.negotiatedAudio()
-            val hasAudioChoice =
-                if (viewModel.isDirect) audioGroups.isNotEmpty() else hubAudio.size >= 2
-            val audioLabel = if (viewModel.isDirect) {
-                currentAudio
-            } else {
-                hubAudio.getOrNull(viewModel.currentAudioTrack)
-                    ?.let { listOfNotNull(it.language?.uppercase(), it.codec.uppercase()).joinToString(" · ") }
-            }
-            if (hasAudioChoice) {
-                menu.add(
-                    0,
-                    2,
-                    2,
-                    menuContext.getString(R.string.player_settings_audio, audioLabel ?: menuContext.getString(R.string.default_label)),
-                )
-            }
-            setOnMenuItemClickListener { item ->
-                when (item.itemId) {
-                    0 -> showResizeMenu(menuContext, anchor)
-                    1 -> showSpeedMenu(menuContext, anchor)
-                    2 -> showAudioTrackMenu(menuContext, anchor)
-                }
-                true
-            }
-        }.show()
+    fun selectPictureSize(index: Int) {
+        if (index == resizeModeIndex) return
+        applyResize(index)
+        flash(GestureIndicator.Resize(context.getString(RESIZE_MODES[index].second)))
     }
 
     val touchState = remember { TouchState() }
@@ -1197,11 +1080,15 @@ private fun PlayerContent(
                     findViewById<SeekWindowTimeBar>(androidx.media3.ui.R.id.exo_progress).windowStartMs =
                         { viewModel.seekWindowStartMs }
                     findViewById<ImageButton>(R.id.kw_back).setOnClickListener { onClose() }
-                    findViewById<ImageButton>(androidx.media3.ui.R.id.exo_settings).setOnClickListener { anchor ->
-                        showSettingsMenu(ctx, anchor)
+                    // Media3's own settings menu is built by a private,
+                    // non-extensible adapter inside PlayerControlView, so
+                    // the gear's click is taken over entirely and opens
+                    // the side panel instead.
+                    findViewById<ImageButton>(androidx.media3.ui.R.id.exo_settings).setOnClickListener {
+                        panelStack = listOf(PanelPage.Settings)
                     }
-                    findViewById<ImageButton>(R.id.kw_subtitle).setOnClickListener { anchor ->
-                        showSubtitleTrackMenu(ctx, anchor)
+                    findViewById<ImageButton>(R.id.kw_subtitle).setOnClickListener {
+                        panelStack = listOf(PanelPage.Tracks(TracksTab.Subtitles))
                     }
                     // Hooked on the content frame's layout, since both
                     // resize-mode switches and video-size changes relayout
@@ -1362,9 +1249,12 @@ private fun PlayerContent(
         // manage. showController() alone lands focus on exo_play_pause
         // (see the ControllerVisibilityListener set up on this PlayerView
         // above) - no separate focus call needed here.
-        LaunchedEffect(isPaused, isInPip, playerView) {
+        // Opening the side panel puts the controls away (it has the
+        // viewer's attention, and on TV the D-pad, now); they come back,
+        // if still paused, once it closes.
+        LaunchedEffect(isPaused, isInPip, panelOpen, playerView) {
             val view = playerView ?: return@LaunchedEffect
-            if (isPaused && !isInPip) {
+            if (isPaused && !isInPip && !panelOpen) {
                 view.controllerShowTimeoutMs = 0
                 view.showController()
             } else {
@@ -1373,7 +1263,7 @@ private fun PlayerContent(
             }
         }
 
-        if (isPaused && !isInPip) {
+        if (isPaused && !isInPip && !panelOpen) {
             Box(
                 modifier = Modifier
                     .align(Alignment.Center)
@@ -1457,6 +1347,78 @@ private fun PlayerContent(
         }
 
         if (!isInPip) {
+            val panelModel = remember(
+                currentTracks, subtitleTracks, selectedSubtitle, resizeModeIndex, playbackSpeed,
+                autoSkipEnabled, autoPlayNext, segments, adjacentEpisodes,
+            ) {
+                val mono = context.getString(R.string.channels_mono)
+                val stereo = context.getString(R.string.channels_stereo)
+                val subtitleStrings = SubtitleOptionStrings(
+                    embedded = context.getString(R.string.subtitle_origin_embedded),
+                    external = context.getString(R.string.subtitle_origin_external),
+                    downloaded = context.getString(R.string.subtitle_origin_downloaded),
+                    ocr = context.getString(R.string.subtitle_origin_ocr),
+                    burnedIn = context.getString(R.string.subtitle_burned_in),
+                    machine = context.getString(R.string.subtitle_badge_machine),
+                )
+                val audio = if (viewModel.isDirect) {
+                    val nameProvider = DefaultTrackNameProvider(context.resources)
+                    directAudioTracks().map { (group, index) ->
+                        val format = group.getTrackFormat(index)
+                        val channels = channelLabel(format.channelCount, mono, stereo)
+                        val title = languageDisplayName(format.language)
+                            ?: format.label
+                            ?: nameProvider.getTrackName(format)
+                        TrackOption(
+                            title = title,
+                            detail = listOfNotNull(
+                                format.label?.takeIf { it != title },
+                                audioCodecName(format.sampleMimeType),
+                                channels,
+                            ).joinToString(" · ").ifBlank { null },
+                            summary = listOfNotNull(title, channels).joinToString(" · "),
+                            selected = group.isTrackSelected(index),
+                        )
+                    }
+                } else {
+                    viewModel.negotiatedAudio().mapIndexed { index, stream ->
+                        val channels = channelLabel(stream.channels, mono, stereo)
+                        val title = languageDisplayName(stream.language)
+                            ?: stream.language?.uppercase()
+                            ?: audioCodecName(stream.codec).orEmpty()
+                        TrackOption(
+                            title = title,
+                            detail = listOfNotNull(audioCodecName(stream.codec), channels).joinToString(" · ").ifBlank { null },
+                            summary = listOfNotNull(title, channels).joinToString(" · "),
+                            selected = index == viewModel.currentAudioTrack,
+                        )
+                    }
+                }
+                PlayerPanelModel(
+                    subtitles = listOf(
+                        TrackOption(context.getString(R.string.subtitle_off), selected = selectedSubtitle == null),
+                    ) + subtitleTracks.map { subtitleOption(it, it.id == selectedSubtitle?.id, subtitleStrings) },
+                    audio = audio,
+                    pictureSizes = RESIZE_MODES.mapIndexed { index, (_, labelRes) ->
+                        TrackOption(context.getString(labelRes), selected = index == resizeModeIndex)
+                    },
+                    speeds = PLAYBACK_SPEEDS.map { TrackOption(formatSpeed(it), selected = it == playbackSpeed) },
+                    autoSkip = autoSkipEnabled.takeIf { segments.isNotEmpty() },
+                    autoPlayNext = autoPlayNext.takeIf { adjacentEpisodes?.nextId != null },
+                )
+            }
+            PlayerSidePanel(
+                stack = panelStack,
+                onStackChange = { panelStack = it },
+                model = panelModel,
+                onSelectSubtitle = ::selectSubtitle,
+                onSelectAudio = ::selectAudio,
+                onSelectPictureSize = ::selectPictureSize,
+                onSelectSpeed = { viewModel.player.setPlaybackSpeed(PLAYBACK_SPEEDS[it]) },
+                onAutoSkipChange = { autoSkipEnabled = it },
+                onAutoPlayNextChange = viewModel::setAutoPlayNext,
+            )
+
             SnackbarHost(
                 hostState = snackbarHostState,
                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp),
