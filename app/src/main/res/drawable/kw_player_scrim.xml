@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Controller backdrop: a light overall dim so the centre buttons read
+     over bright video, with deeper gradients behind the top bar and the
+     bottom bar + seek bar, instead of media3's flat 60% black. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <color android:color="#33000000" />
+    </item>
+    <item android:gravity="top" android:height="160dp">
+        <shape>
+            <gradient android:angle="270" android:startColor="#B3000000" android:endColor="#00000000" />
+        </shape>
+    </item>
+    <item android:gravity="bottom" android:height="220dp">
+        <shape>
+            <gradient android:angle="90" android:startColor="#CC000000" android:endColor="#00000000" />
+        </shape>
+    </item>
+</layer-list>

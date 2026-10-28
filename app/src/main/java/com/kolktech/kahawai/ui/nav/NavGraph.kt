@@ -394,13 +394,14 @@ fun KahawaiNavGraph(app: KahawaiApp, modifier: Modifier = Modifier) {
                     }
                     navController.navigate(Routes.player(nextItemId, 0L, -1, nextSubtitleTrackId, libraryId))
                 },
-                // Same back-stack rewrite as onNextEpisode, for the "<"
-                // button jumping to the previous episode instead.
-                onPreviousEpisode = { previousItemId, previousSubtitleTrackId ->
-                    navController.navigate(Routes.detail(previousItemId, libraryId)) {
+                // Same back-stack rewrite as onNextEpisode, for any
+                // episode picked from the player's episode list, opened
+                // at its resume point.
+                onPlayEpisode = { episodeItemId, episodeStartMs, episodeSubtitleTrackId ->
+                    navController.navigate(Routes.detail(episodeItemId, libraryId)) {
                         popUpTo(Routes.DETAIL) { inclusive = true }
                     }
-                    navController.navigate(Routes.player(previousItemId, 0L, -1, previousSubtitleTrackId, libraryId))
+                    navController.navigate(Routes.player(episodeItemId, episodeStartMs, -1, episodeSubtitleTrackId, libraryId))
                 },
             )
         }
