@@ -25,7 +25,7 @@ profileinstaller = "1.4.1"
 # Central; no NDK/CMake needed on our side. https://github.com/peerless2012/libass-android
 libassAndroid = "0.5.1"
 junit = "4.13.2"
-mockwebserver = "5.5.0"
+mockwebserver = "5.5.1"
 mockk = "1.14.11"
 kotlinxCoroutinesTest = "1.11.0"
 turbine = "1.2.1"
