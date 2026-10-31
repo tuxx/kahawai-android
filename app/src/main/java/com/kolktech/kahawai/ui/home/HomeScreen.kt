@@ -15,6 +15,16 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import kotlinx.coroutines.launch
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -186,6 +196,8 @@ fun HomeScreen(
                             // Coming back from an item's page, focus goes
                             // to that item instead.
                             val returnFocus = rememberReturnFocus()
+                            val listState = rememberLazyListState()
+                            val scope = rememberCoroutineScope()
 
                             // Column count is derived once from the measured
                             // width (so landscape/tablet fills the row instead
@@ -208,13 +220,68 @@ fun HomeScreen(
                                 // rather than all ROW_SIZE posters in that
                                 // library at once — that all-at-once burst was
                                 // the cause of the scroll stutter.
-                                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                                // A library's title bar is a stop of its own
+                                // in both directions: Up from its first row
+                                // of posters and Down from the row above it
+                                // land on it, and Down from it lands on its
+                                // first poster. Spatial search skipped it
+                                // from a poster on the left, and from the
+                                // full-width bar picked whichever poster sat
+                                // under its middle. A target may have
+                                // scrolled out of composition, so its place
+                                // in the list is needed to bring it back
+                                // first; this mirrors the items laid out
+                                // below.
+                                val headerFocus = remember(s.rows) {
+                                    s.rows.associate { it.library.id to FocusRequester() }
+                                }
+                                val firstPosterFocus = remember(s.rows) {
+                                    s.rows.associate { it.library.id to FocusRequester() }
+                                }
+                                val headerIndex = buildMap {
+                                    var index = 0
+                                    if (s.continueWatching.isNotEmpty()) {
+                                        index += 1 + s.continueWatching.chunked(continueWatchingColumns).size
+                                    }
+                                    if (s.upNext.isNotEmpty()) {
+                                        index += 1 + s.upNext.chunked(continueWatchingColumns).size
+                                    }
+                                    s.rows.forEach { row ->
+                                        put(row.library.id, index)
+                                        index += 1 + row.items.chunked(columns).size
+                                    }
+                                }
+                                // Scrolls the item at [index] into view when
+                                // it isn't, then focuses [requester] on it.
+                                val focusItem = { index: Int, scrollTo: Int, requester: FocusRequester ->
+                                    scope.launch {
+                                        if (listState.layoutInfo.visibleItemsInfo.none { it.index == index }) {
+                                            listState.scrollToItem(scrollTo)
+                                            withFrameNanos {}
+                                        }
+                                        runCatching { requester.requestFocus() }
+                                    }
+                                    Unit
+                                }
+                                val focusHeader = { libraryId: String ->
+                                    val index = headerIndex.getValue(libraryId)
+                                    focusItem(index, index, headerFocus.getValue(libraryId))
+                                }
+                                // Scrolls to the title rather than the row,
+                                // so the two stay on screen together.
+                                val focusFirstPoster = { libraryId: String ->
+                                    val index = headerIndex.getValue(libraryId)
+                                    focusItem(index + 1, index, firstPosterFocus.getValue(libraryId))
+                                }
+                                val firstLibraryId = s.rows.firstOrNull()?.library?.id
+                                LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                                     if (s.continueWatching.isNotEmpty()) {
                                         item(key = "continue-watching-header") {
                                             ContinueWatchingHeader()
                                         }
+                                        val chunks = s.continueWatching.chunked(continueWatchingColumns)
                                         itemsIndexed(
-                                            s.continueWatching.chunked(continueWatchingColumns),
+                                            chunks,
                                             key = { _, chunk -> "continue-watching-${chunk.first().id}" },
                                         ) { chunkIndex, chunk ->
                                             ContinueWatchingGridRow(
@@ -224,6 +291,9 @@ fun HomeScreen(
                                                 onOpenFeedItem,
                                                 returnFocus,
                                                 keyPrefix = "continue-watching",
+                                                onDownFromRow = firstLibraryId
+                                                    ?.takeIf { chunkIndex == chunks.lastIndex && s.upNext.isEmpty() }
+                                                    ?.let { id -> { focusHeader(id) } },
                                                 firstItemFocusRequester = if (chunkIndex == 0) {
                                                     firstItemFocusRequester
                                                 } else {
@@ -240,8 +310,9 @@ fun HomeScreen(
                                         item(key = "up-next-header") {
                                             UpNextHeader()
                                         }
+                                        val chunks = s.upNext.chunked(continueWatchingColumns)
                                         itemsIndexed(
-                                            s.upNext.chunked(continueWatchingColumns),
+                                            chunks,
                                             key = { _, chunk -> "up-next-${chunk.first().id}" },
                                         ) { chunkIndex, chunk ->
                                             ContinueWatchingGridRow(
@@ -251,6 +322,9 @@ fun HomeScreen(
                                                 onOpenFeedItem,
                                                 returnFocus,
                                                 keyPrefix = "up-next",
+                                                onDownFromRow = firstLibraryId
+                                                    ?.takeIf { chunkIndex == chunks.lastIndex }
+                                                    ?.let { id -> { focusHeader(id) } },
                                                 firstItemFocusRequester = if (s.continueWatching.isEmpty() &&
                                                     chunkIndex == 0
                                                 ) {
@@ -264,10 +338,17 @@ fun HomeScreen(
                                     }
                                     s.rows.forEachIndexed { rowIndex, row ->
                                         item(key = "${row.library.id}-header") {
-                                            LibraryHeader(row, onOpenLibrary)
+                                            LibraryHeader(
+                                                row,
+                                                onOpenLibrary,
+                                                headerFocus.getValue(row.library.id),
+                                                onDown = { focusFirstPoster(row.library.id) },
+                                            )
                                         }
+                                        val chunks = row.items.chunked(columns)
+                                        val nextLibraryId = s.rows.getOrNull(rowIndex + 1)?.library?.id
                                         itemsIndexed(
-                                            row.items.chunked(columns),
+                                            chunks,
                                             key = { _, chunk -> "${row.library.id}-${chunk.first().id}" },
                                         ) { chunkIndex, chunk ->
                                             PosterGridRow(
@@ -277,6 +358,16 @@ fun HomeScreen(
                                                 onOpenItem,
                                                 returnFocus,
                                                 keyPrefix = row.library.id,
+                                                onUpFromRow = if (chunkIndex == 0) {
+                                                    { focusHeader(row.library.id) }
+                                                } else {
+                                                    null
+                                                },
+                                                onDownFromRow = nextLibraryId
+                                                    ?.takeIf { chunkIndex == chunks.lastIndex }
+                                                    ?.let { id -> { focusHeader(id) } },
+                                                firstPosterFocus = firstPosterFocus.getValue(row.library.id)
+                                                    .takeIf { chunkIndex == 0 },
                                                 firstItemFocusRequester = if (s.continueWatching.isEmpty() &&
                                                     s.upNext.isEmpty() &&
                                                     rowIndex == 0 &&
@@ -357,6 +448,8 @@ private fun UpNextHeader() {
 private fun LibraryHeader(
     row: LibraryRow,
     onOpenLibrary: (id: String, name: String) -> Unit,
+    focusRequester: FocusRequester,
+    onDown: () -> Unit,
 ) {
     // Same reasoning as PosterCard: D-pad focus needs its own obvious
     // affordance, so the bar gets a tinted fill and the accent color.
@@ -370,6 +463,8 @@ private fun LibraryHeader(
             .padding(top = 4.dp, start = 8.dp, end = 8.dp, bottom = 4.dp)
             .clip(HEADER_SHAPE)
             .background(if (focused) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else Color.Transparent)
+            .focusRequester(focusRequester)
+            .dpadOverride(onDown = onDown)
             .onFocusChanged { focused = it.isFocused }
             .clickable(
                 onClickLabel = stringResource(R.string.home_open_library, row.library.name),
@@ -409,6 +504,8 @@ private fun ContinueWatchingGridRow(
     onOpenItem: (item: Item) -> Unit,
     returnFocus: ReturnFocus,
     keyPrefix: String,
+    /// Where Down goes from this row instead of the spatial search.
+    onDownFromRow: (() -> Unit)? = null,
     firstItemFocusRequester: FocusRequester? = null,
     showProgress: Boolean = true,
 ) {
@@ -422,7 +519,10 @@ private fun ContinueWatchingGridRow(
                 item,
                 repo,
                 { returnFocus.onOpen(key); onOpenItem(item) },
-                modifier = Modifier.weight(1f).onFocusChanged { if (it.isFocused) returnFocus.onFocused(key) },
+                modifier = Modifier
+                    .weight(1f)
+                    .onFocusChanged { if (it.isFocused) returnFocus.onFocused(key) }
+                    .dpadOverride(onDown = onDownFromRow),
                 focusRequester = returnFocus.requesterFor(key)
                     ?: firstItemFocusRequester.takeIf { index == 0 && !returnFocus.hasTarget },
                 showProgress = showProgress,
@@ -442,6 +542,12 @@ private fun PosterGridRow(
     onOpenItem: (itemId: String, libraryId: String) -> Unit,
     returnFocus: ReturnFocus,
     keyPrefix: String,
+    /// Where Up and Down go from this row instead of the spatial search;
+    /// null leaves it to the search.
+    onUpFromRow: (() -> Unit)? = null,
+    onDownFromRow: (() -> Unit)? = null,
+    /// Attached to the row's first poster, for Down from the title above.
+    firstPosterFocus: FocusRequester? = null,
     firstItemFocusRequester: FocusRequester? = null,
 ) {
     Row(
@@ -454,7 +560,11 @@ private fun PosterGridRow(
                 item,
                 repo,
                 { id -> returnFocus.onOpen(key); onOpenItem(id, item.libraryId) },
-                modifier = Modifier.weight(1f).onFocusChanged { if (it.isFocused) returnFocus.onFocused(key) },
+                modifier = Modifier
+                    .weight(1f)
+                    .then(if (index == 0 && firstPosterFocus != null) Modifier.focusRequester(firstPosterFocus) else Modifier)
+                    .onFocusChanged { if (it.isFocused) returnFocus.onFocused(key) }
+                    .dpadOverride(onUp = onUpFromRow, onDown = onDownFromRow),
                 focusRequester = returnFocus.requesterFor(key)
                     ?: firstItemFocusRequester.takeIf { index == 0 && !returnFocus.hasTarget },
             )
@@ -462,5 +572,20 @@ private fun PosterGridRow(
         repeat(columns - chunk.size) {
             Spacer(modifier = Modifier.weight(1f))
         }
+    }
+}
+
+/// Takes D-pad Up/Down over from the spatial focus search for this control.
+/// Null leaves that direction to the search.
+private fun Modifier.dpadOverride(onUp: (() -> Unit)? = null, onDown: (() -> Unit)? = null): Modifier {
+    if (onUp == null && onDown == null) return this
+    return onPreviewKeyEvent { event ->
+        val action = when (event.key) {
+            Key.DirectionUp -> onUp
+            Key.DirectionDown -> onDown
+            else -> null
+        } ?: return@onPreviewKeyEvent false
+        if (event.type == KeyEventType.KeyDown) action()
+        true
     }
 }
