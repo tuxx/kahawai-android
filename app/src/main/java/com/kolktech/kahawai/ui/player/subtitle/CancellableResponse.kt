@@ -35,7 +35,10 @@ internal suspend fun <T> Call.useCancellableResponse(read: (Response) -> T): T =
             } catch (e: IOException) {
                 // Closing a blocked socket throws IOException. A cancelled
                 // reader must not fail its parent or enter the retry path.
-                ensureActive()
+                // Check the outer scope: it is marked cancelling before the
+                // watcher closes the socket, while this withContext job may
+                // not be yet when the read fails.
+                this@coroutineScope.ensureActive()
                 throw e
             }
         }
