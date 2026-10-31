@@ -64,6 +64,8 @@ import com.kolktech.kahawai.ui.components.ContinueWatchingCard
 import com.kolktech.kahawai.ui.components.ErrorView
 import com.kolktech.kahawai.ui.components.OnResumeEffect
 import com.kolktech.kahawai.ui.components.PosterCard
+import com.kolktech.kahawai.ui.components.ReturnFocus
+import com.kolktech.kahawai.ui.components.rememberReturnFocus
 import com.kolktech.kahawai.ui.theme.KahawaiOnSurfaceVariant
 
 private val POSTER_MIN_WIDTH = 100.dp
@@ -181,6 +183,9 @@ fun HomeScreen(
                             // (see its focusRequester handling) rather than
                             // this scope guessing when that's safe to do.
                             val firstItemFocusRequester = remember { FocusRequester() }
+                            // Coming back from an item's page, focus goes
+                            // to that item instead.
+                            val returnFocus = rememberReturnFocus()
 
                             // Column count is derived once from the measured
                             // width (so landscape/tablet fills the row instead
@@ -217,6 +222,8 @@ fun HomeScreen(
                                                 continueWatchingColumns,
                                                 repo,
                                                 onOpenFeedItem,
+                                                returnFocus,
+                                                keyPrefix = "continue-watching",
                                                 firstItemFocusRequester = if (chunkIndex == 0) {
                                                     firstItemFocusRequester
                                                 } else {
@@ -242,6 +249,8 @@ fun HomeScreen(
                                                 continueWatchingColumns,
                                                 repo,
                                                 onOpenFeedItem,
+                                                returnFocus,
+                                                keyPrefix = "up-next",
                                                 firstItemFocusRequester = if (s.continueWatching.isEmpty() &&
                                                     chunkIndex == 0
                                                 ) {
@@ -266,6 +275,8 @@ fun HomeScreen(
                                                 columns,
                                                 repo,
                                                 onOpenItem,
+                                                returnFocus,
+                                                keyPrefix = row.library.id,
                                                 firstItemFocusRequester = if (s.continueWatching.isEmpty() &&
                                                     s.upNext.isEmpty() &&
                                                     rowIndex == 0 &&
@@ -396,6 +407,8 @@ private fun ContinueWatchingGridRow(
     columns: Int,
     repo: CatalogRepository,
     onOpenItem: (item: Item) -> Unit,
+    returnFocus: ReturnFocus,
+    keyPrefix: String,
     firstItemFocusRequester: FocusRequester? = null,
     showProgress: Boolean = true,
 ) {
@@ -404,12 +417,14 @@ private fun ContinueWatchingGridRow(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
     ) {
         chunk.forEachIndexed { index, item ->
+            val key = "$keyPrefix-${item.id}"
             ContinueWatchingCard(
                 item,
                 repo,
-                { onOpenItem(item) },
-                modifier = Modifier.weight(1f),
-                focusRequester = if (index == 0) firstItemFocusRequester else null,
+                { returnFocus.onOpen(key); onOpenItem(item) },
+                modifier = Modifier.weight(1f).onFocusChanged { if (it.isFocused) returnFocus.onFocused(key) },
+                focusRequester = returnFocus.requesterFor(key)
+                    ?: firstItemFocusRequester.takeIf { index == 0 && !returnFocus.hasTarget },
                 showProgress = showProgress,
             )
         }
@@ -425,6 +440,8 @@ private fun PosterGridRow(
     columns: Int,
     repo: CatalogRepository,
     onOpenItem: (itemId: String, libraryId: String) -> Unit,
+    returnFocus: ReturnFocus,
+    keyPrefix: String,
     firstItemFocusRequester: FocusRequester? = null,
 ) {
     Row(
@@ -432,12 +449,14 @@ private fun PosterGridRow(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
     ) {
         chunk.forEachIndexed { index, item ->
+            val key = "$keyPrefix-${item.id}"
             PosterCard(
                 item,
                 repo,
-                { id -> onOpenItem(id, item.libraryId) },
-                modifier = Modifier.weight(1f),
-                focusRequester = if (index == 0) firstItemFocusRequester else null,
+                { id -> returnFocus.onOpen(key); onOpenItem(id, item.libraryId) },
+                modifier = Modifier.weight(1f).onFocusChanged { if (it.isFocused) returnFocus.onFocused(key) },
+                focusRequester = returnFocus.requesterFor(key)
+                    ?: firstItemFocusRequester.takeIf { index == 0 && !returnFocus.hasTarget },
             )
         }
         repeat(columns - chunk.size) {

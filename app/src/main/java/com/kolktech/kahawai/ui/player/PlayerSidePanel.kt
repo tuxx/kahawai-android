@@ -10,19 +10,14 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
@@ -42,40 +37,31 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
@@ -122,19 +108,9 @@ internal data class PlayerPanelModel(
     val statsForNerds: Boolean,
 )
 
-private val PanelBackground = Color(0xF2161618)
-private val GroupBackground = Color(0xFF242427)
-private val FocusBackground = Color.White.copy(alpha = 0.16f)
-private val SecondaryText = Color.White.copy(alpha = 0.6f)
-private val SectionText = Color.White.copy(alpha = 0.5f)
-
-// Sized for a phone held sideways (~400dp tall), where the panel has to
-// show a whole settings group without scrolling; a tablet or TV just gets
-// more of it on screen at once.
-private val RowLabelSize = 15.sp
-private val RowValueSize = 14.sp
-private val RowDetailSize = 12.sp
-private val RowMinHeight = 44.dp
+private val PanelBackground = PlayerPanelColors.panel
+private val GroupBackground = PlayerPanelColors.group
+private val SecondaryText = PlayerPanelColors.secondaryText
 
 /// Settings and track pickers as a panel over the video, in place of the
 /// old anchored popups: on the right in landscape, as a bottom sheet in
@@ -408,162 +384,6 @@ private fun TracksPage(
     }
 }
 
-@Composable
-private fun RowScope.TabButton(label: String, count: Int, selected: Boolean, onClick: () -> Unit) {
-    val interaction = remember { MutableInteractionSource() }
-    val focused by interaction.collectIsFocusedAsState()
-    Box(
-        modifier = Modifier
-            .weight(1f)
-            .clip(CircleShape)
-            .background(
-                when {
-                    selected -> Color.White
-                    focused -> FocusBackground
-                    else -> Color.Transparent
-                },
-            )
-            .clickable(interaction, LocalIndication.current, role = Role.Tab, onClick = onClick)
-            .padding(vertical = 7.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        val textColor = if (selected) Color.Black else Color.White
-        Text(
-            buildAnnotatedString {
-                append(label)
-                withStyle(SpanStyle(color = textColor.copy(alpha = 0.5f), fontWeight = FontWeight.Normal)) { append("  $count") }
-            },
-            color = textColor,
-            fontWeight = FontWeight.SemiBold,
-            fontSize = 14.sp,
-        )
-    }
-}
-
-/// A list of choices with the current one ticked. D-pad focus lands on the
-/// ticked row, so a remote user starts where they already are.
-@Composable
-private fun OptionList(options: List<TrackOption>, onSelect: (Int) -> Unit) {
-    val initial = options.indexOfFirst { it.selected }.coerceAtLeast(0)
-    val listState = rememberLazyListState(initialFirstVisibleItemIndex = (initial - 2).coerceAtLeast(0))
-    val focus = rememberInitialFocus()
-    LazyColumn(
-        state = listState,
-        contentPadding = PaddingValues(start = 6.dp, end = 6.dp, bottom = 12.dp),
-    ) {
-        itemsIndexed(options) { index, option ->
-            OptionRow(
-                option,
-                onClick = { onSelect(index) },
-                modifier = if (index == initial) Modifier.focusRequester(focus) else Modifier,
-            )
-        }
-    }
-}
-
-@Composable
-private fun OptionRow(option: TrackOption, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    PanelRow(
-        onClick = onClick,
-        role = Role.RadioButton,
-        enabled = option.enabled,
-        background = if (option.selected) GroupBackground else Color.Transparent,
-        shape = RoundedCornerShape(12.dp),
-        modifier = modifier,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
-                    option.title,
-                    color = Color.White,
-                    fontSize = RowLabelSize,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                option.badges.forEach { Badge(it) }
-            }
-            option.detail?.let {
-                Text(it, color = SecondaryText, fontSize = RowDetailSize, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            }
-        }
-        if (option.selected) {
-            Spacer(Modifier.width(10.dp))
-            Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
-        }
-    }
-}
-
-@Composable
-private fun Badge(text: String) {
-    Text(
-        text,
-        color = Color.White.copy(alpha = 0.85f),
-        fontSize = 10.sp,
-        fontWeight = FontWeight.Bold,
-        maxLines = 1,
-        modifier = Modifier
-            .background(Color.White.copy(alpha = 0.15f), RoundedCornerShape(4.dp))
-            .padding(horizontal = 6.dp, vertical = 1.dp),
-    )
-}
-
-@Composable
-private fun SectionHeader(text: String) {
-    Text(
-        text.uppercase(),
-        color = SectionText,
-        fontSize = 11.sp,
-        fontWeight = FontWeight.Medium,
-        letterSpacing = 1.sp,
-        modifier = Modifier.padding(start = 12.dp, top = 12.dp, bottom = 5.dp),
-    )
-}
-
-@Composable
-private fun RowGroup(content: @Composable () -> Unit) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(GroupBackground),
-    ) { content() }
-}
-
-@Composable
-private fun GroupDivider() {
-    HorizontalDivider(color = Color.White.copy(alpha = 0.06f))
-}
-
-@Composable
-private fun ValueRow(
-    label: String,
-    value: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    enabled: Boolean = true,
-) {
-    PanelRow(onClick = onClick, role = Role.Button, enabled = enabled, modifier = modifier) {
-        Text(label, color = Color.White, fontSize = RowLabelSize, fontWeight = FontWeight.Medium, maxLines = 1)
-        Spacer(Modifier.width(12.dp))
-        Text(
-            value,
-            color = SecondaryText,
-            fontSize = RowValueSize,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-            textAlign = TextAlign.End,
-        )
-        Icon(
-            Icons.AutoMirrored.Filled.KeyboardArrowRight,
-            contentDescription = null,
-            tint = SecondaryText,
-            modifier = Modifier.padding(start = 2.dp).size(18.dp),
-        )
-    }
-}
 
 @Composable
 private fun SwitchRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
@@ -666,46 +486,4 @@ private fun EpisodeRow(episode: EpisodeOption, onClick: () -> Unit, modifier: Mo
             )
         }
     }
-}
-
-/// A clickable panel row with a visible focus state, which is all a D-pad
-/// user has to go by: the ripple's own focus tint is too faint over the
-/// dark panel.
-@Composable
-private fun PanelRow(
-    onClick: () -> Unit,
-    role: Role,
-    modifier: Modifier = Modifier,
-    enabled: Boolean = true,
-    background: Color = Color.Transparent,
-    shape: RoundedCornerShape = RoundedCornerShape(0.dp),
-    content: @Composable RowScope.() -> Unit,
-) {
-    val interaction = remember { MutableInteractionSource() }
-    val focused by interaction.collectIsFocusedAsState()
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .heightIn(min = RowMinHeight)
-            .clip(shape)
-            .background(if (focused) FocusBackground else background)
-            .clickable(interaction, LocalIndication.current, enabled = enabled, role = role, onClick = onClick)
-            .alpha(if (enabled) 1f else 0.4f)
-            .padding(horizontal = 14.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        content = content,
-    )
-}
-
-/// Focus for the row a page should start on. Requested a frame after the
-/// page appears, once the row is laid out; on touch devices, where rows
-/// aren't focusable, the request just does nothing.
-@Composable
-private fun rememberInitialFocus(): FocusRequester {
-    val requester = remember { FocusRequester() }
-    LaunchedEffect(requester) {
-        withFrameNanos {}
-        runCatching { requester.requestFocus() }
-    }
-    return requester
 }

@@ -28,6 +28,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -38,6 +39,7 @@ import com.kolktech.kahawai.data.repository.CatalogRepository
 import com.kolktech.kahawai.ui.components.ErrorView
 import com.kolktech.kahawai.ui.components.OnResumeEffect
 import com.kolktech.kahawai.ui.components.PosterCard
+import com.kolktech.kahawai.ui.components.rememberReturnFocus
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -94,6 +96,9 @@ fun LibraryScreen(
                 // exists in the lazy grid yet), so this only needs to
                 // hand the first item a requester — not call it itself.
                 val firstItemFocusRequester = remember { FocusRequester() }
+                // Coming back from an item's page, focus goes to that item
+                // instead.
+                val returnFocus = rememberReturnFocus()
                 LazyVerticalGrid(
                     columns = GridCells.Adaptive(minSize = 110.dp),
                     state = gridState,
@@ -106,8 +111,10 @@ fun LibraryScreen(
                         PosterCard(
                             item,
                             repo,
-                            { id -> onOpenItem(id, item.libraryId) },
-                            focusRequester = if (index == 0) firstItemFocusRequester else null,
+                            { id -> returnFocus.onOpen(item.id); onOpenItem(id, item.libraryId) },
+                            modifier = Modifier.onFocusChanged { if (it.isFocused) returnFocus.onFocused(item.id) },
+                            focusRequester = returnFocus.requesterFor(item.id)
+                                ?: firstItemFocusRequester.takeIf { index == 0 && !returnFocus.hasTarget },
                         )
                     }
                     if (s.loadingMore) {

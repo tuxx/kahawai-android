@@ -14,8 +14,10 @@ import io.mockk.coEvery
 import io.mockk.mockkObject
 import io.mockk.unmockkObject
 import kotlinx.coroutines.test.runTest
+import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -23,6 +25,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+
+private const val EMPTY_FEED = """{"items":[],"total":0,"limit":100,"offset":0}"""
 
 class DetailViewModelTest {
 
@@ -396,6 +400,9 @@ class DetailViewModelTest {
                 ]}""",
             ),
         )
+        // Next up is asked of the two home feeds, never of a season.
+        server.enqueue(MockResponse().setBody(EMPTY_FEED))
+        server.enqueue(MockResponse().setBody(EMPTY_FEED))
 
         val viewModel = vm("show1")
 
@@ -406,8 +413,43 @@ class DetailViewModelTest {
             assertTrue(loaded.children.isEmpty())
             assertEquals(listOf(250, 30), loaded.seasons.map { it.total })
             assertEquals("cover2", loaded.seasons[1].metadata?.description?.artwork?.single())
+            assertEquals(null, loaded.nextUp)
         }
-        assertEquals(2, server.requestCount)
+        assertEquals(4, server.requestCount)
+    }
+
+    @Test
+    fun `a show's next up comes from the continue watching feed`() = runTest {
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = MockResponse().setBody(
+                when {
+                    request.path!!.contains("/seasons") -> """{"seasons":[
+                        {"kind":"episode","number":1,"total":10,"played":10},
+                        {"kind":"episode","number":2,"total":8,"played":2}
+                    ]}"""
+                    request.path!!.contains("continue-watching") -> """{"items":[{
+                        "id":"show1","kind":"series","media_type":"shows","title":"A Show",
+                        "representative_id":"c1:1","metadata":{"description":{},"provenance":{}},
+                        "library_id":"lib1","resume_position_ms":60000,"resume_duration_ms":1200000,
+                        "child":{"id":"s2e3","parent_id":"show1","representative_id":"c1:9","title":"Three",
+                          "position":{"kind":"episode","season":2,"episode":3},"source_count":1,
+                          "metadata":{"description":{},"provenance":{}}}
+                    }],"total":1,"limit":100,"offset":0}"""
+                    request.path!!.contains("up-next") -> EMPTY_FEED
+                    else -> itemJson("show1", "A Show", kind = "series")
+                },
+            )
+        }
+
+        val viewModel = vm("show1")
+
+        viewModel.state.test {
+            var state = awaitItem()
+            if (state is DetailState.Loading) state = awaitItem()
+            val nextUp = (state as DetailState.Loaded).nextUp
+            assertEquals("s2e3", nextUp?.id)
+            assertEquals(60_000L, nextUp?.resumePositionMs)
+        }
     }
 
     @Test

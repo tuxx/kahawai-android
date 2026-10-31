@@ -1,5 +1,6 @@
 package com.kolktech.kahawai.ui.player
 
+import com.kolktech.kahawai.data.network.dto.ClientAudioStream
 import com.kolktech.kahawai.data.network.dto.SubtitleTrack
 import com.kolktech.kahawai.data.network.dto.languageDisplayName
 
@@ -75,6 +76,21 @@ internal fun subtitleOption(track: SubtitleTrack, selected: Boolean, strings: Su
         selected = selected,
         // "none" can't be served to this client at all.
         enabled = track.delivery != "none",
+    )
+}
+
+/// A hub-negotiated audio stream as a picker row: the language as its
+/// title, codec and channel layout beneath it.
+internal fun audioOption(stream: ClientAudioStream, selected: Boolean, mono: String, stereo: String): TrackOption {
+    val channels = channelLabel(stream.channels, mono, stereo)
+    val title = languageDisplayName(stream.language)
+        ?: stream.language?.uppercase()
+        ?: audioCodecName(stream.codec).orEmpty()
+    return TrackOption(
+        title = title,
+        detail = listOfNotNull(audioCodecName(stream.codec), channels).joinToString(" · ").ifBlank { null },
+        summary = listOfNotNull(title, channels).joinToString(" · "),
+        selected = selected,
     )
 }
 

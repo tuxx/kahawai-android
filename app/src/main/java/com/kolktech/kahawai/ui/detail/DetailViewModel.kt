@@ -36,6 +36,19 @@ import com.kolktech.kahawai.data.network.dto.negotiatedAudioStreams
 /// (episode/track) to get a Play button.
 internal val NOT_DIRECTLY_PLAYABLE = setOf("show", "album")
 
+/// The episode a "Next up" button should start: one left partway through,
+/// else the first unwatched one after the furthest watched, else the first
+/// unwatched at all (a viewer who skipped ahead and came back). Specials
+/// count only where there is nothing else, as on the Specials page itself.
+/// Null once everything is watched.
+internal fun nextUpEpisode(children: List<Item>): Item? {
+    val episodes = children.filter { it.kind == "episode" }.let { all -> all.filter { it.season != 0 }.ifEmpty { all } }
+    episodes.firstOrNull { !it.played && (it.resumePositionMs ?: 0) > 0 }?.let { return it }
+    val lastWatched = episodes.indexOfLast { it.played }
+    return episodes.drop(lastWatched + 1).firstOrNull { !it.played }
+        ?: episodes.firstOrNull { !it.played }
+}
+
 sealed interface DetailState {
     data object Loading : DetailState
     data class Error(val message: String, val isAuthError: Boolean = false) : DetailState
@@ -43,6 +56,9 @@ sealed interface DetailState {
         val detail: ItemDetail,
         val children: List<Item>,
         val seasons: List<CatalogueChildGroup> = emptyList(),
+        /// The episode a show or season page offers to play next. Null for
+        /// anything else, and once every episode is watched.
+        val nextUp: Item? = null,
         val subtitleTracks: List<SubtitleTrack> = emptyList(),
         val selectedSubtitleTrack: SubtitleTrack? = null,
         val selectedAudioTrackIndex: Int = 0,
@@ -116,7 +132,7 @@ class DetailViewModel(
         load()
     }
 
-    private suspend fun loadContainer(detail: ItemDetail): Pair<List<CatalogueChildGroup>, List<Item>> {
+    private suspend fun loadContainer(detail: ItemDetail): Container {
         val seasons = if (detail.kind == "show") repo.seasons(libraryId, itemId) else emptyList()
         val showGrid = detail.kind == "show" && seasons.size > 1 && season == null
         val children = if (detail.kind in NOT_DIRECTLY_PLAYABLE && !showGrid) {
@@ -124,8 +140,25 @@ class DetailViewModel(
         } else {
             emptyList()
         }
-        return seasons to children
+        // A season grid has no episode rows of its own, and a season can
+        // run to hundreds of them, so the show's place is asked of the
+        // home feeds rather than worked out from a downloaded season. A
+        // show nobody has started opens on its first episode. Best-effort:
+        // without it the page just has no Next up button.
+        val nextUp = if (showGrid) {
+            runCatching {
+                repo.seriesNextUp(libraryId, itemId) ?: seasons
+                    .takeIf { groups -> groups.none { it.played > 0 } }
+                    ?.firstOrNull { it.kind == "episode" && it.number != 0 }
+                    ?.let { first -> repo.firstEpisode(libraryId, itemId, first.number?.toString() ?: "absolute") }
+            }.getOrNull()
+        } else {
+            nextUpEpisode(children)
+        }
+        return Container(seasons, children, nextUp)
     }
+
+    private data class Container(val seasons: List<CatalogueChildGroup>, val children: List<Item>, val nextUp: Item?)
 
     fun load() {
         _state.value = DetailState.Loading
@@ -174,7 +207,7 @@ class DetailViewModel(
                 )
                 val detail = choice.item
                 if (pinnedSourceId == null) automaticSourceId = choice.sourceId
-                val (seasons, children) = loadContainer(detail)
+                val (seasons, children, nextUp) = loadContainer(detail)
                 val subtitleTracks = detail.negotiated?.subtitles ?: emptyList()
                 sourceScope = sourcePreferenceScope(detail.sources, choice.sourceId)
                 // What this title is remembered as being watched with, so the
@@ -193,6 +226,7 @@ class DetailViewModel(
                     detail = detail,
                     children = children,
                     seasons = seasons,
+                    nextUp = nextUp,
                     subtitleTracks = subtitleTracks,
                     selectedSubtitleTrack = selected,
                     selectedAudioTrackIndex = choice.audioTrack,
@@ -289,13 +323,14 @@ class DetailViewModel(
                 )
                 val detail = choice.item
                 if (pinnedSourceId == null) automaticSourceId = choice.sourceId
-                val (seasons, children) = loadContainer(detail)
+                val (seasons, children, nextUp) = loadContainer(detail)
                 sourceScope = sourcePreferenceScope(detail.sources, choice.sourceId)
                 val current = _state.value as? DetailState.Loaded ?: return@launch
                 _state.value = current.copy(
                     detail = detail,
                     children = children,
                     seasons = seasons,
+                    nextUp = nextUp,
                     subtitleTracks = detail.negotiated?.subtitles ?: emptyList(),
                     sourceId = choice.sourceId,
                     automaticSourceId = automaticSourceId,
