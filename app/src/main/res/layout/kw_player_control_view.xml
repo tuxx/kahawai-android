@@ -89,8 +89,11 @@
            episodes, and every session is a single MediaItem, so its own
            exo_next would only ever be disabled. PlayerScreen owns their
            visibility and clicks. -->
+      <!-- Up from this row is the seek bar; see the focus map above
+           exo_top_controls. -->
       <LinearLayout android:id="@+id/kw_episodes"
           style="@style/KwPlayerAction"
+          android:nextFocusUp="@id/exo_progress"
           android:visibility="gone"
           android:contentDescription="@string/player_episodes">
         <ImageView style="@style/KwPlayerAction.Icon"
@@ -102,6 +105,7 @@
 
       <LinearLayout android:id="@+id/kw_audio_subtitles"
           style="@style/KwPlayerAction"
+          android:nextFocusUp="@id/exo_progress"
           android:contentDescription="@string/player_panel_audio_subtitles">
         <ImageView style="@style/KwPlayerAction.Icon"
             android:src="@drawable/kw_ic_subtitles"/>
@@ -112,6 +116,7 @@
 
       <LinearLayout android:id="@+id/kw_next_episode"
           style="@style/KwPlayerAction"
+          android:nextFocusUp="@id/exo_progress"
           android:visibility="gone"
           android:contentDescription="@string/player_next_episode">
         <ImageView style="@style/KwPlayerAction.Icon"
@@ -158,6 +163,8 @@
        from the playhead rightward. SeekWindowTimeBar paints the whole
        length itself. -->
   <com.kolktech.kahawai.ui.player.SeekWindowTimeBar android:id="@id/exo_progress"
+      android:nextFocusUp="@+id/kw_skip"
+      android:nextFocusDown="@id/kw_audio_subtitles"
       android:layout_width="match_parent"
       android:layout_height="@dimen/exo_styled_progress_layout_height"
       android:layout_gravity="bottom"
@@ -183,13 +190,19 @@
     <!-- singleLine="false" as in media3's own include, to avoid
          https://github.com/androidx/media/issues/511. -->
     <Button android:id="@id/exo_rew_with_amount"
+        android:nextFocusUp="@id/kw_home"
+        android:nextFocusDown="@id/kw_skip"
         android:singleLine="false"
         style="@style/KwPlayerCenter.Rewind"/>
 
     <ImageButton android:id="@id/exo_play_pause"
+        android:nextFocusUp="@id/kw_home"
+        android:nextFocusDown="@id/kw_skip"
         style="@style/KwPlayerCenter.PlayPause"/>
 
     <Button android:id="@id/exo_ffwd_with_amount"
+        android:nextFocusUp="@id/exo_settings"
+        android:nextFocusDown="@id/kw_skip"
         android:singleLine="false"
         style="@style/KwPlayerCenter.Forward"/>
 
@@ -201,7 +214,9 @@
        can reach (and lands on first) for as long as the offer lasts.
        PlayerScreen sets its label, icon, visibility and click. Its bottom
        margin clears the seek bar: progress margin + height + 8dp. -->
-  <Button android:id="@+id/kw_skip"
+  <Button android:id="@id/kw_skip"
+      android:nextFocusUp="@id/exo_play_pause"
+      android:nextFocusDown="@id/exo_progress"
       style="@style/KwPlayerSkip"
       android:layout_gravity="bottom|end"
       android:layout_marginEnd="19dp"
@@ -227,7 +242,21 @@
        PlayerControlViewLayoutManager alpha-animates together with the
        background and bottom bar, so they fade in/out in perfect sync with
        the rest of the controls — and, as real controller children,
-       they're reachable by D-pad focus on TV. -->
+       they're reachable by D-pad focus on TV.
+
+       D-pad focus map, top to bottom. Spatial search alone wanders here:
+       the rows are different widths and the top bar's buttons sit far
+       from the centre controls, so Up from play/pause found nothing.
+
+         back -> home        settings      (Down from any: play/pause;
+                                            Up/Left from home: back)
+         rewind  play/pause  forward       (Up: home, home, settings)
+         skip pill, while offered          (Down from centre lands here)
+         seek bar                          (Left/Right seek)
+         episodes  audio & subtitles  next (Up: seek bar)
+
+       A Down/Up target that's gone (no skip offer) passes the move on
+       along its own nextFocus in the same direction. -->
   <LinearLayout
       android:id="@+id/exo_top_controls"
       android:layout_width="match_parent"
@@ -240,6 +269,8 @@
 
     <ImageButton
         android:id="@+id/kw_back"
+        android:nextFocusRight="@+id/kw_home"
+        android:nextFocusDown="@+id/kw_home"
         android:layout_width="44dp"
         android:layout_height="44dp"
         android:padding="10dp"
@@ -252,6 +283,9 @@
          under the player (see NavGraph's onHome). -->
     <ImageButton
         android:id="@+id/kw_home"
+        android:nextFocusUp="@id/kw_back"
+        android:nextFocusLeft="@id/kw_back"
+        android:nextFocusDown="@id/exo_play_pause"
         android:layout_width="44dp"
         android:layout_height="44dp"
         android:layout_marginStart="8dp"
@@ -302,6 +336,8 @@
          side panel instead of media3's own settings menu. -->
     <ImageButton
         android:id="@id/exo_settings"
+        android:nextFocusLeft="@id/kw_home"
+        android:nextFocusDown="@id/exo_play_pause"
         android:layout_width="44dp"
         android:layout_height="44dp"
         android:padding="8dp"

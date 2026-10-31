@@ -47,6 +47,7 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -235,16 +236,27 @@ internal fun PlayActions(
     watchedActionInFlight: Boolean,
     onToggleWatched: () -> Unit,
     playFocusRequester: FocusRequester,
+    /// Up from this row, and Left from Play, go to the floating home button.
+    homeFocusRequester: FocusRequester,
     modifier: Modifier = Modifier,
 ) {
+    val upToHome = Modifier.focusProperties { up = homeFocusRequester }
     Row(
         modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        PlayButton(playLabel, onPlay, Modifier.weight(1f).focusRequester(playFocusRequester))
+        PlayButton(
+            playLabel,
+            onPlay,
+            Modifier
+                .weight(1f)
+                .focusRequester(playFocusRequester)
+                .focusProperties { left = homeFocusRequester }
+                .then(upToHome),
+        )
         if (onStartOver != null) {
-            ActionIcon(Icons.Filled.Replay, stringResource(R.string.detail_start_over), onClick = onStartOver)
+            ActionIcon(Icons.Filled.Replay, stringResource(R.string.detail_start_over), onClick = onStartOver, modifier = upToHome)
         }
         ActionIcon(
             Icons.Filled.Check,
@@ -252,6 +264,7 @@ internal fun PlayActions(
             onClick = onToggleWatched,
             enabled = !watchedActionInFlight,
             active = played,
+            modifier = upToHome,
         )
     }
 }
@@ -274,6 +287,7 @@ private fun ActionIcon(
     onClick: () -> Unit,
     enabled: Boolean = true,
     active: Boolean = false,
+    modifier: Modifier = Modifier,
 ) {
     FilledTonalIconButton(
         onClick = onClick,
@@ -289,7 +303,7 @@ private fun ActionIcon(
                 contentColor = MaterialTheme.colorScheme.onSurface,
             )
         },
-        modifier = Modifier.size(48.dp).dpadFocusBorder(),
+        modifier = modifier.size(48.dp).dpadFocusBorder(),
     ) {
         Icon(icon, contentDescription = description)
     }
@@ -367,6 +381,8 @@ internal fun NextUp(
     episode: Item,
     onPlay: () -> Unit,
     focusRequester: FocusRequester,
+    /// Up and Left from the button go to the floating home button.
+    homeFocusRequester: FocusRequester,
     modifier: Modifier = Modifier,
 ) {
     val resuming = (episode.resumePositionMs ?: 0) > 0
@@ -378,7 +394,13 @@ internal fun NextUp(
                 code ?: episode.title,
             ),
             onClick = onPlay,
-            modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
+            modifier = Modifier
+                .fillMaxWidth()
+                .focusRequester(focusRequester)
+                .focusProperties {
+                    up = homeFocusRequester
+                    left = homeFocusRequester
+                },
         )
         if (code != null) {
             Text(

@@ -20,6 +20,21 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.foundation.lazy.LazyListState
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
+import androidx.compose.foundation.gestures.BringIntoViewSpec
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
@@ -182,6 +197,21 @@ fun DetailScreen(
     val playButtonFocusRequester = remember { FocusRequester() }
     val firstChildFocusRequester = remember { FocusRequester() }
     val backButtonFocusRequester = remember { FocusRequester() }
+    val homeButtonFocusRequester = remember { FocusRequester() }
+    // Held here rather than in DetailContent so the floating buttons can
+    // scroll the page back to its top on the way down into it.
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    // Where Down from the floating buttons goes: the page's main action, or
+    // its first season/episode when it has none. Null leaves it to the
+    // default search.
+    val pageEntry = (state as? DetailState.Loaded)?.let { s ->
+        when {
+            s.detail.kind !in NOT_DIRECTLY_PLAYABLE || s.nextUp != null -> playButtonFocusRequester
+            s.children.isNotEmpty() || s.seasons.size > 1 -> firstChildFocusRequester
+            else -> null
+        }
+    }
 
     Box(Modifier.fillMaxSize()) {
         when (val s = state) {
@@ -251,6 +281,8 @@ fun DetailScreen(
                     onToggleWatched = viewModel::toggleWatched,
                     playButtonFocusRequester = playButtonFocusRequester,
                     firstChildFocusRequester = firstChildFocusRequester,
+                    homeButtonFocusRequester = homeButtonFocusRequester,
+                    listState = listState,
                 )
             }
         }
@@ -268,10 +300,17 @@ fun DetailScreen(
                 .padding(16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            // Back and home read as one column on a remote: Down/Right from
+            // back is home, Up/Left from home is back, and Down from home
+            // goes into the page.
             Surface(
                 onClick = onBack,
                 modifier = Modifier
                     .focusRequester(backButtonFocusRequester)
+                    .focusProperties {
+                        down = homeButtonFocusRequester
+                        right = homeButtonFocusRequester
+                    }
                     .dpadFocusBorder(),
                 shape = CircleShape,
                 color = Color.Black.copy(alpha = 0.5f),
@@ -285,7 +324,27 @@ fun DetailScreen(
             }
             Surface(
                 onClick = onHome,
-                modifier = Modifier.dpadFocusBorder(),
+                modifier = Modifier
+                    .focusRequester(homeButtonFocusRequester)
+                    .focusProperties {
+                        up = backButtonFocusRequester
+                        left = backButtonFocusRequester
+                    }
+                    .onPreviewKeyEvent { event ->
+                        val target = pageEntry
+                        if (target == null || event.key != Key.DirectionDown) return@onPreviewKeyEvent false
+                        // The target may have scrolled out of composition;
+                        // back at the top it exists again.
+                        if (event.type == KeyEventType.KeyDown) {
+                            scope.launch {
+                                listState.scrollToItem(0)
+                                withFrameNanos {}
+                                runCatching { target.requestFocus() }
+                            }
+                        }
+                        true
+                    }
+                    .dpadFocusBorder(),
                 shape = CircleShape,
                 color = Color.Black.copy(alpha = 0.5f),
             ) {
@@ -300,6 +359,7 @@ fun DetailScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun DetailContent(
     state: DetailState.Loaded,
@@ -318,6 +378,8 @@ private fun DetailContent(
     onToggleWatched: () -> Unit,
     playButtonFocusRequester: FocusRequester,
     firstChildFocusRequester: FocusRequester,
+    homeButtonFocusRequester: FocusRequester,
+    listState: LazyListState,
 ) {
     val detail = state.detail
     // Window size class rather than orientation: a portrait tablet or
@@ -335,6 +397,14 @@ private fun DetailContent(
     val videoStream = primarySource?.streams?.video?.firstOrNull()
     val runtimeMs = primarySource?.streams?.durationMs ?: detail.resumeDurationMs
     val playable = detail.kind !in NOT_DIRECTLY_PLAYABLE
+
+    val scope = rememberCoroutineScope()
+    // Play/Next up is where focus lands, and the title sits above it with
+    // nothing focusable of its own: reaching the main action shows the
+    // whole header again.
+    val revealHeader = Modifier.onFocusChanged { focus ->
+        if (focus.hasFocus) scope.launch { listState.animateScrollToItem(0) }
+    }
 
     val seasonGroup = selectedSeason?.let { selected -> state.seasons.find { it.number == selected.number } }
     val posterModel = seasonArtworkModel(repo, detail.libraryId, detail.id, seasonGroup)
@@ -404,7 +474,8 @@ private fun DetailContent(
                 watchedActionInFlight = state.watchedActionInFlight,
                 onToggleWatched = onToggleWatched,
                 playFocusRequester = playButtonFocusRequester,
-                modifier = Modifier.padding(top = 12.dp),
+                homeFocusRequester = homeButtonFocusRequester,
+                modifier = Modifier.padding(top = 12.dp).then(revealHeader),
             )
         }
         state.nextUp?.let { episode ->
@@ -412,7 +483,8 @@ private fun DetailContent(
                 episode = episode,
                 onPlay = { onPlayEpisode(episode.id, episode.resumePositionMs ?: 0) },
                 focusRequester = playButtonFocusRequester,
-                modifier = Modifier.padding(top = 16.dp),
+                homeFocusRequester = homeButtonFocusRequester,
+                modifier = Modifier.padding(top = 16.dp).then(revealHeader),
             )
         }
         detail.metadata?.overview?.takeIf { it.isNotBlank() }?.let {
@@ -487,75 +559,98 @@ private fun DetailContent(
         item { Spacer(Modifier.height(24.dp)) }
     }
 
-    if (useTwoPane) {
-        // The poster stays fixed on the left; info + episodes scroll
-        // together in their own column on the right (Netflix/TV-style
-        // detail layout) rather than the whole page — including the
-        // poster — scrolling as one unit. This also means the episode
-        // list sits in a LazyColumn with a compact sibling (just the
-        // text info, no full-height hero image eating the viewport), so
-        // the first row is reliably composed immediately instead of
-        // being deferred below the fold.
-        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-            DetailBackdrop(backdropModel, Modifier.matchParentSize())
-            // Full-height 2:3 poster where the window is short (landscape
-            // phone/TV — the poster column fills the height exactly), but
-            // never more than 40% of the width, so a tall window (portrait
-            // tablet) keeps the poster modest and leaves the width to the
-            // info/episodes pane.
-            val posterWidth = min(maxHeight * 2f / 3f, maxWidth * 0.4f)
-            Row(modifier = Modifier.fillMaxSize()) {
-                Box(
-                    modifier = Modifier
-                        .width(posterWidth)
-                        .aspectRatio(2f / 3f),
-                ) {
-                    AsyncImage(
-                        model = posterModel,
-                        contentDescription = detail.title,
-                        contentScale = ContentScale.Crop,
-                        placeholder = painterResource(R.drawable.placeholder_poster),
-                        error = painterResource(R.drawable.placeholder_poster),
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                    WatchProgressBar(
-                        positionMs = detail.resumePositionMs,
-                        durationMs = detail.resumeDurationMs,
-                        played = detail.played,
-                        modifier = Modifier.align(Alignment.BottomCenter),
-                    )
-                }
-                LazyColumn(
-                    modifier = Modifier.weight(1f).fillMaxHeight(),
-                    contentPadding = PaddingValues(top = 16.dp),
-                ) {
-                    item {
-                        Column(Modifier.padding(horizontal = 16.dp)) {
-                            title()
-                            body()
-                        }
+    CompositionLocalProvider(LocalBringIntoViewSpec provides EdgeScroll) {
+        if (useTwoPane) {
+            // The poster stays fixed on the left; info + episodes scroll
+            // together in their own column on the right (Netflix/TV-style
+            // detail layout) rather than the whole page — including the
+            // poster — scrolling as one unit. This also means the episode
+            // list sits in a LazyColumn with a compact sibling (just the
+            // text info, no full-height hero image eating the viewport), so
+            // the first row is reliably composed immediately instead of
+            // being deferred below the fold.
+            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                DetailBackdrop(backdropModel, Modifier.matchParentSize())
+                // Full-height 2:3 poster where the window is short (landscape
+                // phone/TV — the poster column fills the height exactly), but
+                // never more than 40% of the width, so a tall window (portrait
+                // tablet) keeps the poster modest and leaves the width to the
+                // info/episodes pane.
+                val posterWidth = min(maxHeight * 2f / 3f, maxWidth * 0.4f)
+                Row(modifier = Modifier.fillMaxSize()) {
+                    Box(
+                        modifier = Modifier
+                            .width(posterWidth)
+                            .aspectRatio(2f / 3f),
+                    ) {
+                        AsyncImage(
+                            model = posterModel,
+                            contentDescription = detail.title,
+                            contentScale = ContentScale.Crop,
+                            placeholder = painterResource(R.drawable.placeholder_poster),
+                            error = painterResource(R.drawable.placeholder_poster),
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        WatchProgressBar(
+                            positionMs = detail.resumePositionMs,
+                            durationMs = detail.resumeDurationMs,
+                            played = detail.played,
+                            modifier = Modifier.align(Alignment.BottomCenter),
+                        )
                     }
-                    sections()
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                        contentPadding = PaddingValues(top = 16.dp),
+                    ) {
+                        item {
+                            Column(Modifier.padding(horizontal = 16.dp)) {
+                                title()
+                                body()
+                            }
+                        }
+                        sections()
+                    }
                 }
+            }
+        } else {
+            LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                item {
+                    Column {
+                        DetailHero(
+                            backdropModel = backdropModel,
+                            posterModel = posterModel,
+                            contentDescription = detail.title,
+                            positionMs = detail.resumePositionMs,
+                            durationMs = detail.resumeDurationMs,
+                            played = detail.played,
+                            content = title,
+                        )
+                        Column(Modifier.padding(horizontal = 16.dp)) { body() }
+                    }
+                }
+                sections()
             }
         }
-    } else {
-        LazyColumn(modifier = Modifier.fillMaxSize()) {
-            item {
-                Column {
-                    DetailHero(
-                        backdropModel = backdropModel,
-                        posterModel = posterModel,
-                        contentDescription = detail.title,
-                        positionMs = detail.resumePositionMs,
-                        durationMs = detail.resumeDurationMs,
-                        played = detail.played,
-                        content = title,
-                    )
-                    Column(Modifier.padding(horizontal = 16.dp)) { body() }
-                }
-            }
-            sections()
+    }
+}
+
+/// On a TV, Compose scrolls a focused control to a pivot a third of the way
+/// down the list, which on this page pushes the title off the top as soon
+/// as Play takes focus. Here a list scrolls only as far as it needs to show
+/// the focused control, as it does on touch.
+@OptIn(ExperimentalFoundationApi::class)
+private val EdgeScroll = object : BringIntoViewSpec {
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
+        val trailing = offset + size
+        return when {
+            // Already in view, or bigger than the view and covering it.
+            offset >= 0 && trailing <= containerSize -> 0f
+            offset < 0 && trailing > containerSize -> 0f
+            // Taller than the view: line up its top.
+            size > containerSize -> offset
+            offset < 0 -> offset
+            else -> trailing - containerSize
         }
     }
 }
