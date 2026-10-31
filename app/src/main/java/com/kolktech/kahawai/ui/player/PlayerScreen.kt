@@ -220,6 +220,9 @@ fun PlayerScreen(
     startMs: Long,
     appSettingsStore: AppSettingsStore,
     onClose: () -> Unit,
+    /// The top bar's home button: leaves the player and everything
+    /// stacked under it in one go.
+    onHome: () -> Unit,
     onNextEpisode: (itemId: String, subtitleTrackId: Long?) -> Unit = { _, _ -> },
     /// Any other episode of the show, from the side panel's episode list,
     /// opened at [startMs] (its resume point, or 0).
@@ -257,6 +260,10 @@ fun PlayerScreen(
     val closeAndPause: () -> Unit = {
         viewModel.player.pause()
         onClose()
+    }
+    val goHomeAndPause: () -> Unit = {
+        viewModel.player.pause()
+        onHome()
     }
 
     // Fires once handlePlaybackEnded() determines there's no next episode
@@ -348,7 +355,7 @@ fun PlayerScreen(
                     Text(stringResource(R.string.kw_back))
                 }
             }
-            is PlayerState.Ready -> PlayerContent(viewModel, appSettingsStore, closeAndPause, onNextEpisode, onPlayEpisode)
+            is PlayerState.Ready -> PlayerContent(viewModel, appSettingsStore, closeAndPause, goHomeAndPause, onNextEpisode, onPlayEpisode)
         }
     }
 }
@@ -408,6 +415,7 @@ private fun PlayerContent(
     viewModel: PlayerViewModel,
     appSettingsStore: AppSettingsStore,
     onClose: () -> Unit,
+    onHome: () -> Unit,
     onNextEpisode: (itemId: String, subtitleTrackId: Long?) -> Unit,
     onPlayEpisode: (itemId: String, startMs: Long, subtitleTrackId: Long?) -> Unit,
 ) {
@@ -1151,6 +1159,7 @@ private fun PlayerContent(
                     findViewById<SeekWindowTimeBar>(androidx.media3.ui.R.id.exo_progress).windowStartMs =
                         { viewModel.seekWindowStartMs }
                     findViewById<ImageButton>(R.id.kw_back).setOnClickListener { onClose() }
+                    findViewById<ImageButton>(R.id.kw_home).setOnClickListener { onHome() }
                     // Media3's own settings menu is built by a private,
                     // non-extensible adapter inside PlayerControlView, so
                     // the gear's click is taken over entirely and opens

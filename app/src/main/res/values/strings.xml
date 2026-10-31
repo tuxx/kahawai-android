@@ -2,6 +2,7 @@
 <resources>
     <string name="app_name">Kahawai</string>
     <string name="kw_back">Back</string>
+    <string name="kw_home">Home</string>
 
     <!-- Shared across multiple screens -->
     <string name="search">Search</string>

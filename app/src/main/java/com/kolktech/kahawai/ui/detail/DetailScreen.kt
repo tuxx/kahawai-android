@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -148,6 +149,8 @@ fun DetailScreen(
     onOpenSeason: (season: Int?) -> Unit,
     onPlay: (itemId: String, startMs: Long, audioTrack: Int, subtitleTrackId: Long?, prefetch: PlaybackPrefetch) -> Unit,
     onBack: () -> Unit,
+    /// Straight back to Home, past every series/season page on the stack.
+    onHome: () -> Unit,
     onSessionExpired: () -> Unit,
 ) {
     val application = LocalContext.current.applicationContext as Application
@@ -258,22 +261,40 @@ fun DetailScreen(
         // own back button) rather than a full TopAppBar, which would
         // shove the artwork down and duplicate the title shown right
         // below it.
-        Surface(
-            onClick = onBack,
+        Row(
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .padding(16.dp)
-                .focusRequester(backButtonFocusRequester)
-                .dpadFocusBorder(),
-            shape = CircleShape,
-            color = Color.Black.copy(alpha = 0.5f),
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Icon(
-                Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = stringResource(R.string.kw_back),
-                modifier = Modifier.padding(10.dp),
-                tint = Color.White,
-            )
+            Surface(
+                onClick = onBack,
+                modifier = Modifier
+                    .focusRequester(backButtonFocusRequester)
+                    .dpadFocusBorder(),
+                shape = CircleShape,
+                color = Color.Black.copy(alpha = 0.5f),
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = stringResource(R.string.kw_back),
+                    modifier = Modifier.padding(10.dp),
+                    tint = Color.White,
+                )
+            }
+            Surface(
+                onClick = onHome,
+                modifier = Modifier.dpadFocusBorder(),
+                shape = CircleShape,
+                color = Color.Black.copy(alpha = 0.5f),
+            ) {
+                Icon(
+                    Icons.Filled.Home,
+                    contentDescription = stringResource(R.string.kw_home),
+                    modifier = Modifier.padding(10.dp),
+                    tint = Color.White,
+                )
+            }
         }
     }
 }
