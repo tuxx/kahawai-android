@@ -155,6 +155,11 @@ fun KahawaiNavGraph(app: KahawaiApp, modifier: Modifier = Modifier) {
         navController.navigate(Routes.LOGIN) { popUpTo(0) { inclusive = true } }
     }
 
+    // The home buttons on detail pages and in the player: drop everything
+    // above Home in one step instead of walking back through each
+    // series/season/episode entry.
+    val onHome: () -> Unit = { navController.popBackStack(Routes.HOME, inclusive = false) }
+
     // Every screen keeps out of the display cutout (and any visible bars)
     // EXCEPT the player: video should use the whole panel, cutout
     // included, so its route skips safeDrawingPadding entirely.
@@ -337,6 +342,7 @@ fun KahawaiNavGraph(app: KahawaiApp, modifier: Modifier = Modifier) {
                     navController.navigate(Routes.player(playId, startMs, audioTrack, subtitleTrackId, libraryId, prefetch))
                 },
                 onBack = { navController.popBackStack() },
+                onHome = onHome,
                 onSessionExpired = onSessionExpired,
             )
         }
@@ -380,6 +386,7 @@ fun KahawaiNavGraph(app: KahawaiApp, modifier: Modifier = Modifier) {
                 libraryId = libraryId,
                 prefetch = prefetch,
                 onClose = { navController.popBackStack() },
+                onHome = onHome,
                 // Replaces both the current (just-finished) player entry
                 // AND its episode's detail entry with the NEXT episode's
                 // own detail entry, then stacks its player on top of that
