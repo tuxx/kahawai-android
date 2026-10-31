@@ -64,6 +64,13 @@ class AppSettingsStore(context: Context) {
         get() = prefs.getBoolean(KEY_AUTO_SKIP_INTROS_OUTROS, false)
         set(value) = prefs.edit().putBoolean(KEY_AUTO_SKIP_INTROS_OUTROS, value).apply()
 
+    /// The player's stats-for-nerds overlay, switched from its side panel.
+    /// Kept across sessions: whoever turns it on is usually watching for
+    /// something over more than one video.
+    var statsForNerds: Boolean
+        get() = prefs.getBoolean(KEY_STATS_FOR_NERDS, false)
+        set(value) = prefs.edit().putBoolean(KEY_STATS_FOR_NERDS, value).apply()
+
     private companion object {
         const val KEY_RESERVE_NOTCH_SPACE = "reserve_notch_space"
         const val KEY_APP_LANGUAGE = "app_language"
@@ -76,5 +83,6 @@ class AppSettingsStore(context: Context) {
         const val KEY_SEEK_BACK_MS = "seek_back_ms"
         const val KEY_SEEK_FORWARD_MS = "seek_forward_ms"
         const val KEY_AUTO_SKIP_INTROS_OUTROS = "auto_skip_intros_outros"
+        const val KEY_STATS_FOR_NERDS = "stats_for_nerds"
     }
 }

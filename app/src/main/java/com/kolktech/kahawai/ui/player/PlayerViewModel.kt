@@ -2,6 +2,7 @@ package com.kolktech.kahawai.ui.player
 
 import android.app.Application
 import android.net.Uri
+import android.os.SystemClock
 import android.util.Log
 import androidx.annotation.OptIn
 import androidx.lifecycle.AndroidViewModel
@@ -47,6 +48,7 @@ import com.kolktech.kahawai.data.network.dto.Chapter
 import com.kolktech.kahawai.data.network.dto.Item
 import com.kolktech.kahawai.data.network.dto.Pref
 import com.kolktech.kahawai.data.network.dto.Segment
+import com.kolktech.kahawai.data.network.dto.PlaybackStreams
 import com.kolktech.kahawai.data.network.dto.StartSessionResponse
 import com.kolktech.kahawai.data.network.dto.ClientAudioStream
 import com.kolktech.kahawai.data.network.dto.SubtitleTrack
@@ -551,11 +553,14 @@ class PlayerViewModel(
     private val playbackAllocator = DefaultAllocator(true, C.DEFAULT_BUFFER_SEGMENT_SIZE)
     private val playbackLoadControl = PlaybackLoadControl(Runtime.getRuntime().maxMemory(), playbackAllocator)
 
+    /// Feeds the stats-for-nerds overlay; see [statsSnapshot].
+    private val statsTracker = PlaybackStatsTracker()
+
     private val realPlayer: ExoPlayer by lazy {
         val dataSourceFactory = DefaultDataSource.Factory(
             getApplication(),
             OkHttpDataSource.Factory(ApiClient.streamingOkHttpClient()),
-        )
+        ).setTransferListener(statsTracker)
         ExoPlayer.Builder(getApplication())
             .setMediaSourceFactory(buildPlayerMediaSourceFactory(dataSourceFactory))
             // Keep short startup/rebuffer thresholds for produced HLS,
@@ -577,6 +582,7 @@ class PlayerViewModel(
             }
             .build()
             .apply {
+                addAnalyticsListener(statsTracker)
                 if (BuildConfig.DEBUG) {
                     addAnalyticsListener(object : AnalyticsListener {
                         override fun onAudioUnderrun(
@@ -791,6 +797,12 @@ class PlayerViewModel(
         get() = if (isDirect) 0 else offsetMs
 
     private var session: StartSessionResponse? = null
+
+    /// The hub's per-stream verdict for [session]. A seek-restart can
+    /// re-plan (an audio switch to a track the device can't decode turns
+    /// "copy" into "transcode"), so it's replaced from each seek response
+    /// rather than read off the session start.
+    private var sessionStreams: PlaybackStreams? = null
     private var offsetMs: Long = 0
     private var progressJob: Job? = null
     private var seekJob: Job? = null
@@ -948,6 +960,7 @@ class PlayerViewModel(
             resumeSourceFingerprint = session?.sourceFingerprint,
         )
         session = newSession
+        sessionStreams = newSession.streams
         applySessionSubtitleListing(newSession)
         Log.d(
             TAG,
@@ -1346,6 +1359,7 @@ class PlayerViewModel(
                 // independently timed — the "PGS out of sync" report),
                 // with no way to switch off the burned copy afterwards.
                 val result = repo.seek(session.sessionId, targetMs)
+                result.streams?.let { sessionStreams = it }
                 // See start()'s comment: offsetMs is the ABSOLUTE
                 // position this fresh playlist starts at (targetMs
                 // itself), not result.partBaseMs — using partBaseMs here
@@ -1920,6 +1934,7 @@ class PlayerViewModel(
                 internalPause = true
                 realPlayer.pause()
                 repo.seek(active.sessionId, positionMs, audioTrack = index)
+                    .streams?.let { sessionStreams = it }
                 // Same reasoning as handleSeek: offsetMs is the absolute
                 // position this fresh playlist begins at.
                 offsetMs = positionMs
@@ -1995,6 +2010,50 @@ class PlayerViewModel(
 
     internal fun negotiatedAudio(): List<ClientAudioStream> =
         sources.firstOrNull { it.sourceId == (session?.sourceId ?: negotiatedSourceId) }?.audio.orEmpty()
+
+    /// Whether the stats overlay is up. Frame release times are only
+    /// collected while it is: the listener runs on every frame.
+    fun setStatsEnabled(enabled: Boolean) {
+        statsTracker.resetFrames()
+        if (enabled) realPlayer.setVideoFrameMetadataListener(statsTracker)
+        else realPlayer.clearVideoFrameMetadataListener(statsTracker)
+    }
+
+    /// One reading for the stats overlay, which polls it once a second.
+    internal fun statsSnapshot(): PlaybackStatsSnapshot {
+        val counters = realPlayer.videoDecoderCounters?.also { it.ensureUpdated() }
+        val active = session
+        val subtitle = _selectedSubtitleTrack.value
+        // A direct session's file is the stream; its average rate is the
+        // only bitrate there is when the container doesn't state one.
+        val fileBitrateBps = active?.takeIf { isDirect }?.let { s ->
+            val size = s.size ?: return@let null
+            val durationMs = s.durationMs?.takeIf { it > 0 } ?: return@let null
+            size * 8_000 / durationMs
+        }
+        return PlaybackStatsSnapshot(
+            atNs = SystemClock.elapsedRealtimeNanos(),
+            mode = active?.mode,
+            streams = sessionStreams,
+            videoFormat = realPlayer.videoFormat,
+            audioFormat = realPlayer.audioFormat,
+            sourceAudio = negotiatedAudio().getOrNull(audioTrack),
+            subtitle = subtitle?.let { listOfNotNull(it.format, it.delivery, it.origin).joinToString(" · ") },
+            videoDecoder = statsTracker.videoDecoderName,
+            audioDecoder = statsTracker.audioDecoderName,
+            renderedFrames = counters?.renderedOutputBufferCount ?: 0,
+            droppedFrames = counters?.droppedBufferCount ?: 0,
+            skippedFrames = counters?.skippedOutputBufferCount ?: 0,
+            maxConsecutiveDropped = counters?.maxConsecutiveDroppedBufferCount ?: 0,
+            frameOffsetUs = counters?.totalVideoFrameProcessingOffsetUs ?: 0,
+            frameOffsetCount = counters?.videoFrameProcessingOffsetCount ?: 0,
+            bytesTransferred = statsTracker.bytesTransferred,
+            bandwidthEstimateBps = statsTracker.bandwidthEstimateBps,
+            fileBitrateBps = fileBitrateBps,
+            bufferedMs = realPlayer.totalBufferedDuration,
+            frameTiming = statsTracker.frameTiming(),
+        )
+    }
 
     private fun startProgressLoop() {
         progressJob?.cancel()
