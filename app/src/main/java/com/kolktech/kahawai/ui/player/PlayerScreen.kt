@@ -37,9 +37,12 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -466,6 +469,13 @@ private fun PlayerContent(
     // rest of this session without touching the stored preference.
     var autoSkipEnabled by remember { mutableStateOf(appSettingsStore.autoSkipIntrosOutros) }
     val autoPlayNext by viewModel.autoPlayNext.collectAsState()
+    // The side panel's switch, saved as it's flipped (see
+    // AppSettingsStore.statsForNerds).
+    var statsForNerds by remember { mutableStateOf(appSettingsStore.statsForNerds) }
+    DisposableEffect(viewModel, statsForNerds) {
+        viewModel.setStatsEnabled(statsForNerds)
+        onDispose { viewModel.setStatsEnabled(false) }
+    }
 
     // Side panel pages, top last; empty while it's closed (see
     // PlayerSidePanel). Read from the key routing below, hence the
@@ -1377,10 +1387,29 @@ private fun PlayerContent(
             }
         }
 
+        if (!isInPip && statsForNerds) {
+            // Below the top bar, so the settings button stays reachable.
+            PlaybackStatsOverlay(
+                sample = viewModel::statsSnapshot,
+                display = {
+                    val view = playerView
+                    DisplayStats(
+                        refreshRateHz = view?.display?.refreshRate,
+                        viewWidth = view?.width ?: 0,
+                        viewHeight = view?.height ?: 0,
+                    )
+                },
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .windowInsetsPadding(WindowInsets.displayCutout)
+                    .padding(top = 76.dp, end = 16.dp),
+            )
+        }
+
         if (!isInPip) {
             val panelModel = remember(
                 currentTracks, subtitleTracks, selectedSubtitle, resizeModeIndex, playbackSpeed,
-                autoSkipEnabled, autoPlayNext, segments, adjacentEpisodes, episodes, localResources,
+                autoSkipEnabled, autoPlayNext, statsForNerds, segments, adjacentEpisodes, episodes, localResources,
             ) {
                 val mono = localResources.getString(R.string.channels_mono)
                 val stereo = localResources.getString(R.string.channels_stereo)
@@ -1450,6 +1479,7 @@ private fun PlayerContent(
                     speeds = PLAYBACK_SPEEDS.map { TrackOption(formatSpeed(it), selected = it == playbackSpeed) },
                     autoSkip = autoSkipEnabled.takeIf { segments.isNotEmpty() },
                     autoPlayNext = autoPlayNext.takeIf { adjacentEpisodes?.nextId != null },
+                    statsForNerds = statsForNerds,
                 )
             }
             PlayerSidePanel(
@@ -1462,6 +1492,10 @@ private fun PlayerContent(
                 onSelectSpeed = { viewModel.player.setPlaybackSpeed(PLAYBACK_SPEEDS[it]) },
                 onAutoSkipChange = { autoSkipEnabled = it },
                 onAutoPlayNextChange = viewModel::setAutoPlayNext,
+                onStatsForNerdsChange = {
+                    statsForNerds = it
+                    appSettingsStore.statsForNerds = it
+                },
                 onSelectEpisode = { index ->
                     val episode = episodes[index]
                     // The one already playing just carries on.

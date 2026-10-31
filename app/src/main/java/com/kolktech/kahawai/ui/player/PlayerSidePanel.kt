@@ -119,6 +119,7 @@ internal data class PlayerPanelModel(
     val speeds: List<TrackOption>,
     val autoSkip: Boolean?,
     val autoPlayNext: Boolean?,
+    val statsForNerds: Boolean,
 )
 
 private val PanelBackground = Color(0xF2161618)
@@ -150,6 +151,7 @@ internal fun PlayerSidePanel(
     onSelectSpeed: (Int) -> Unit,
     onAutoSkipChange: (Boolean) -> Unit,
     onAutoPlayNextChange: (Boolean) -> Unit,
+    onStatsForNerdsChange: (Boolean) -> Unit,
     onSelectEpisode: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -235,6 +237,7 @@ internal fun PlayerSidePanel(
                             onOpen = push,
                             onAutoSkipChange = onAutoSkipChange,
                             onAutoPlayNextChange = onAutoPlayNextChange,
+                            onStatsForNerdsChange = onStatsForNerdsChange,
                         )
                         is PanelPage.Tracks -> TracksPage(
                             tab = current.tab,
@@ -302,6 +305,7 @@ private fun SettingsPage(
     onOpen: (PanelPage) -> Unit,
     onAutoSkipChange: (Boolean) -> Unit,
     onAutoPlayNextChange: (Boolean) -> Unit,
+    onStatsForNerdsChange: (Boolean) -> Unit,
 ) {
     val firstRowFocus = rememberInitialFocus()
     val pictureSize = model.pictureSizes.firstOrNull { it.selected }?.summary.orEmpty()
@@ -355,6 +359,12 @@ private fun SettingsPage(
                         SwitchRow(stringResource(R.string.player_panel_auto_play_next), checked, onAutoPlayNextChange)
                     }
                 }
+            }
+        }
+        item { SectionHeader(stringResource(R.string.player_panel_advanced)) }
+        item {
+            RowGroup {
+                SwitchRow(stringResource(R.string.player_panel_stats_for_nerds), model.statsForNerds, onStatsForNerdsChange)
             }
         }
     }
