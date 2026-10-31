@@ -1451,16 +1451,7 @@ private fun PlayerContent(
                     }
                 } else {
                     viewModel.negotiatedAudio().mapIndexed { index, stream ->
-                        val channels = channelLabel(stream.channels, mono, stereo)
-                        val title = languageDisplayName(stream.language)
-                            ?: stream.language?.uppercase()
-                            ?: audioCodecName(stream.codec).orEmpty()
-                        TrackOption(
-                            title = title,
-                            detail = listOfNotNull(audioCodecName(stream.codec), channels).joinToString(" · ").ifBlank { null },
-                            summary = listOfNotNull(title, channels).joinToString(" · "),
-                            selected = index == viewModel.currentAudioTrack,
-                        )
+                        audioOption(stream, index == viewModel.currentAudioTrack, mono, stereo)
                     }
                 }
                 PlayerPanelModel(

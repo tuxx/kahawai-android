@@ -36,11 +36,20 @@
     <string name="detail_start_over">Start over</string>
     <string name="detail_resume">Resume</string>
     <string name="detail_play">Play</string>
-    <string name="detail_subtitles_close">Close</string>
     <string name="detail_chapters">Chapters</string>
     <string name="detail_chapter_numbered">Chapter %1$d</string>
     <string name="detail_mark_watched">Mark watched</string>
     <string name="detail_mark_unwatched">Mark unwatched</string>
+    <string name="detail_time_left">%1$s left</string>
+    <string name="detail_play_episode">Play %1$s</string>
+    <string name="detail_resume_episode">Resume %1$s</string>
+    <string name="detail_more">More</string>
+    <string name="detail_less">Less</string>
+    <string name="detail_cast">Cast</string>
+    <string name="detail_seasons">Seasons</string>
+    <string name="detail_episodes">Episodes</string>
+    <string name="detail_tracks">Tracks</string>
+    <string name="detail_season_progress">%1$d of %2$d watched</string>
     <string name="detail_season">Season %1$d</string>
     <string name="detail_season_specials">Specials</string>
     <string name="detail_season_other">Other episodes</string>
@@ -49,7 +58,6 @@
         <item quantity="other">%1$d episodes</item>
     </plurals>
     <string name="resume_at">Resume at %1$s</string>
-    <string name="resume_at_percent">Resume at %1$s (%2$d%%)</string>
     <string name="runtime_hours_minutes">%1$dh %2$dm</string>
     <string name="runtime_hours">%1$dh</string>
     <string name="runtime_minutes">%1$dm</string>
@@ -147,9 +155,9 @@
     <string name="player_subtitle_switch_failed">Failed to switch subtitle: %1$s</string>
     <string name="player_audio_switch_failed">Failed to switch audio: %1$s</string>
     <string name="player_progress_not_saved">Your progress is no longer being saved for this session.</string>
-    <string name="detail_source">Source</string>
+    <string name="detail_source">Version</string>
     <string name="detail_source_automatic">Automatic</string>
-    <string name="detail_source_automatic_tag">automatic pick</string>
+    <string name="detail_source_auto_badge">Auto</string>
     <string name="detail_source_parts">%1$d parts</string>
     <string name="detail_source_incomplete">incomplete, %1$d expected</string>
     <string name="detail_source_offline">offline</string>

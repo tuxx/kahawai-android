@@ -109,6 +109,22 @@ class CatalogRepository(apiProvider: () -> ApiService = { ApiClient.apiService()
 
     suspend fun item(library: String, id: String): ItemDetail = api.item(library, id).toDetail(library)
 
+    /// Where a series is up to, from the same two feeds the home screen
+    /// shows: an episode left partway through, else the one after the last
+    /// finished. Null for a series in neither — not started, or done.
+    suspend fun seriesNextUp(library: String, seriesId: String): Item? = coroutineScope {
+        val inProgress = async { continueWatching(library, limit = FEED_SCAN_LIMIT).items }
+        val upNext = async { upNext(library, limit = FEED_SCAN_LIMIT).items }
+        inProgress.await().firstOrNull { it.parentId == seriesId && it.kind == "episode" }
+            ?: upNext.await().firstOrNull { it.parentId == seriesId && it.kind == "episode" }
+    }
+
+    /// A season's first episode, without paging through the rest of it.
+    suspend fun firstEpisode(library: String, id: String, season: String): Item? {
+        val page = api.seasonItems(library, id, season, limit = 1)
+        return page.children.firstOrNull()?.let { it.toItem(library, page.watch[it.id]) }
+    }
+
     /// The item viewer's call: what this client would actually be served,
     /// negotiated against [profile]. Carries the subtitle track list (with
     /// delivery), the skip segments and the
@@ -236,5 +252,11 @@ class CatalogRepository(apiProvider: () -> ApiService = { ApiClient.apiService()
             .joinToString("&")
             .let { if (it.isEmpty()) "" else "?$it" }
         return "${base}api/v1/catalogue/libraries/$libraryId/items/$id/artwork$query"
+    }
+
+    private companion object {
+        /// How far into each feed to look for one series. The feeds hold
+        /// one entry per series in progress, so this is generous.
+        const val FEED_SCAN_LIMIT = 100
     }
 }

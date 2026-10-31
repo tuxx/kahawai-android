@@ -341,6 +341,15 @@ fun KahawaiNavGraph(app: KahawaiApp, modifier: Modifier = Modifier) {
                 onPlay = { playId, startMs, audioTrack, subtitleTrackId, prefetch ->
                     navController.navigate(Routes.player(playId, startMs, audioTrack, subtitleTrackId, libraryId, prefetch))
                 },
+                // Through the episode's own page, so the stack is the same
+                // as having opened it and pressed Play: back from the
+                // player lands on the episode, and the player's next-episode
+                // rewrite (which replaces the topmost detail entry) replaces
+                // that rather than this season page.
+                onPlayEpisode = { episodeId, startMs ->
+                    navController.navigate(Routes.detail(episodeId, libraryId))
+                    navController.navigate(Routes.player(episodeId, startMs, -1, null, libraryId))
+                },
                 onBack = { navController.popBackStack() },
                 onHome = onHome,
                 onSessionExpired = onSessionExpired,
