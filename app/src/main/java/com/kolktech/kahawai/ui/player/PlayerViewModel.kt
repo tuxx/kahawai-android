@@ -39,6 +39,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.kolktech.kahawai.R
 import com.kolktech.kahawai.BuildConfig
+import com.kolktech.kahawai.KahawaiApp
 import com.kolktech.kahawai.playback.PlaybackLoadControl
 import com.kolktech.kahawai.data.network.ApiClient
 import com.kolktech.kahawai.data.network.dto.CapabilityProfile
@@ -177,10 +178,21 @@ internal fun resolvePreviousEpisode(
     return if (index > 0) siblings.getOrNull(index - 1)?.id else null
 }
 
-/// Which episodes the player's "<"/">" buttons should offer, resolved
-/// once at start() alongside the title (see [PlayerViewModel.start]).
-/// Both null for a movie/non-episode item — PlayerScreen hides both
-/// buttons entirely in that case rather than showing disabled controls.
+/// The player's top-bar title: `S4:E1 "Pilot"` over the show's name for
+/// an episode, just the title for anything else.
+data class PlayerTitle(val primary: String, val secondary: String? = null)
+
+internal fun playerTitle(kind: String?, title: String, season: Int?, episode: Int?, showTitle: String?): PlayerTitle =
+    if (kind == "episode" && season != null && episode != null) {
+        PlayerTitle("S$season:E$episode \u201C$title\u201D", showTitle?.takeIf { it.isNotBlank() })
+    } else {
+        PlayerTitle(title)
+    }
+
+/// The episodes either side of this one, resolved once at start()
+/// alongside the title (see [PlayerViewModel.start]). [nextId] drives the
+/// controller's Next episode button, hidden entirely when it's null (a
+/// movie, or the show's last episode) rather than shown disabled.
 internal data class AdjacentEpisodes(val previousId: String?, val nextId: String?)
 
 /// See [PlayerViewModel.syncOrigin]. [correctedOffsetMs] is the hub's
@@ -369,6 +381,54 @@ internal fun skipTargetMs(segment: Segment, durationMs: Long): Long {
     return end.coerceAtLeast(0)
 }
 
+/// How long before the end an episode without a credits segment starts
+/// offering the next one.
+internal const val NEXT_EPISODE_OFFER_MS = 30_000L
+
+/// Credits ending further than this from the file's end are followed by
+/// something worth staying for (a post-credits scene), so they get a plain
+/// "Skip credits" rather than a jump to the next episode.
+internal const val CREDITS_TO_END_MAX_MS = 60_000L
+
+/// What the player's skip button offers right now: a seek past a segment
+/// ([targetMs]) or the next episode ([nextEpisodeId]). [startMs] is where
+/// the offer began, which identifies it for the auto-hide timer.
+internal data class SkipOffer(
+    val labelRes: Int,
+    val startMs: Long,
+    val targetMs: Long? = null,
+    val nextEpisodeId: String? = null,
+) {
+    val isNextEpisode: Boolean get() = nextEpisodeId != null
+}
+
+internal fun skipOffer(
+    segments: List<Segment>,
+    posMs: Long,
+    durationMs: Long,
+    nextEpisodeId: String?,
+): SkipOffer? {
+    val known = durationMs > 0
+    val segment = skippableSegment(segments, posMs)
+    if (segment != null) {
+        val creditsRunToEnd = known && durationMs - segment.endMs <= CREDITS_TO_END_MAX_MS
+        return if (segment.kind == "credits" && nextEpisodeId != null && creditsRunToEnd) {
+            SkipOffer(R.string.player_next_episode, segment.startMs, nextEpisodeId = nextEpisodeId)
+        } else {
+            SkipOffer(SKIP_LABELS.getValue(segment.kind), segment.startMs, targetMs = skipTargetMs(segment, durationMs))
+        }
+    }
+    // Only for an episode with no credits segment at all: where there is
+    // one, it already decided above what the end of the episode offers,
+    // and whatever plays after it (a post-credits scene) is meant to be
+    // watched, not skipped by an OK press meant for play/pause.
+    val hasCredits = segments.any { it.kind == "credits" }
+    if (!hasCredits && nextEpisodeId != null && known && posMs < durationMs && durationMs - posMs <= NEXT_EPISODE_OFFER_MS) {
+        return SkipOffer(R.string.player_next_episode, durationMs - NEXT_EPISODE_OFFER_MS, nextEpisodeId = nextEpisodeId)
+    }
+    return null
+}
+
 /// Chapter marks to draw on the seek bar, in the shape
 /// [DefaultTimeBar.setAdGroupTimesMs] wants: a chapter at zero is
 /// dropped (every file has one and it marks the left edge, where
@@ -466,12 +526,27 @@ class PlayerViewModel(
     private val _playbackFinished = MutableStateFlow(false)
     val playbackFinished: StateFlow<Boolean> = _playbackFinished
 
+    /// The side panel's "Auto-play next episode" switch. For this session
+    /// only: switched off, the end of an episode leaves the player the way
+    /// the end of a movie does instead of opening the next one.
+    private val _autoPlayNext = MutableStateFlow(true)
+    val autoPlayNext: StateFlow<Boolean> = _autoPlayNext
+
+    fun setAutoPlayNext(enabled: Boolean) {
+        _autoPlayNext.value = enabled
+    }
+
     /// Resolved alongside session start (see start()) purely for display
     /// in the player's top bar — best-effort, same as the subtitle track
     /// list, so a failed lookup just leaves the title blank rather than
     /// failing playback.
-    private val _title = MutableStateFlow<String?>(null)
-    val title: StateFlow<String?> = _title
+    private val _title = MutableStateFlow<PlayerTitle?>(null)
+    val title: StateFlow<PlayerTitle?> = _title
+
+    /// The whole show's episodes, in order (see [resolveNextEpisode]), for
+    /// the side panel's episode list. Empty for anything but an episode.
+    private val _episodes = MutableStateFlow<List<Item>>(emptyList())
+    val episodes: StateFlow<List<Item>> = _episodes
 
     private val playbackAllocator = DefaultAllocator(true, C.DEFAULT_BUFFER_SEGMENT_SIZE)
     private val playbackLoadControl = PlaybackLoadControl(Runtime.getRuntime().maxMemory(), playbackAllocator)
@@ -491,6 +566,15 @@ class PlayerViewModel(
             // when focus is returned, without us wiring up an AudioManager
             // listener by hand.
             .setAudioAttributes(AudioAttributes.DEFAULT, /* handleAudioFocus= */ true)
+            // What the controller's rewind/forward buttons step by (and
+            // label themselves with), from Settings > Player > Seeking —
+            // the same increments the double-tap gesture uses.
+            .apply {
+                (application as? KahawaiApp)?.appSettingsStore?.let { settings ->
+                    setSeekBackIncrementMs(settings.seekBackMs)
+                    setSeekForwardIncrementMs(settings.seekForwardMs)
+                }
+            }
             .build()
             .apply {
                 if (BuildConfig.DEBUG) {
@@ -881,15 +965,11 @@ class PlayerViewModel(
         viewModelScope.launch {
             try {
                 val detail = catalogRepo.item(libraryId, itemId)
-                _title.value = if (detail.kind == "episode" && detail.season != null && detail.episode != null) {
-                    val seasonEpisode = "S%02dE%02d".format(detail.season, detail.episode)
-                    listOfNotNull(seasonEpisode, detail.title, detail.parentTitle).joinToString(" - ")
-                } else {
-                    detail.title
-                }
+                _title.value = playerTitle(detail.kind, detail.title, detail.season, detail.episode, detail.parentTitle)
                 val parentId = detail.parentId
                 if (detail.kind == "episode" && parentId != null) {
                     val siblings = catalogRepo.children(libraryId, parentId)
+                    _episodes.value = siblings
                     _adjacentEpisodes.value = AdjacentEpisodes(
                         previousId = resolvePreviousEpisode(detail.kind, parentId, itemId, siblings),
                         nextId = resolveNextEpisode(detail.kind, parentId, itemId, siblings),
@@ -1182,6 +1262,10 @@ class PlayerViewModel(
         if (playbackEndedHandled) return
         playbackEndedHandled = true
         progressJob?.cancel()
+        if (!_autoPlayNext.value) {
+            _playbackFinished.value = true
+            return
+        }
         viewModelScope.launch {
             try {
                 val detail = catalogRepo.item(libraryId, itemId)
