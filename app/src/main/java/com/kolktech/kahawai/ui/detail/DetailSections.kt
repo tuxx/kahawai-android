@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -67,6 +68,7 @@ import com.kolktech.kahawai.data.network.dto.Chapter
 import com.kolktech.kahawai.data.network.dto.Credit
 import com.kolktech.kahawai.data.network.dto.Item
 import com.kolktech.kahawai.ui.components.WatchProgressBar
+import com.kolktech.kahawai.ui.components.rememberArtworkModel
 import com.kolktech.kahawai.util.formatDurationCoarse
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -74,30 +76,39 @@ import java.time.format.FormatStyle
 
 private val CARD_SHAPE = RoundedCornerShape(10.dp)
 
-/// The poster, softened and dimmed, as the page's backdrop. The hub serves
-/// only portrait art, and cropping a poster to a wide hero cuts it through
-/// the middle (legs and half a title treatment), so its colours carry the
-/// header instead and the poster itself is shown whole on top. [model] is
-/// meant to be a small size: scaled up it is soft on every API level, and
-/// the blur (API 31+) only smooths it further.
+/// The page's backdrop. A [sharp] one is the title's own landscape art,
+/// shown as is under a deeper scrim so the text over it stays legible.
+/// Otherwise [model] is the poster, softened and dimmed: cropping a poster
+/// to a wide hero cuts it through the middle (legs and half a title
+/// treatment), so its colours carry the header instead and the poster
+/// itself is shown whole on top. That one is meant to be a small size:
+/// scaled up it is soft on every API level, and the blur (API 31+) only
+/// smooths it further. [onError] lets the caller fall back from a backdrop
+/// the hub hasn't cached yet.
 @Composable
-internal fun DetailBackdrop(model: Any?, modifier: Modifier = Modifier) {
+internal fun DetailBackdrop(
+    model: Any?,
+    modifier: Modifier = Modifier,
+    sharp: Boolean = false,
+    onError: (() -> Unit)? = null,
+) {
     val background = MaterialTheme.colorScheme.background
     Box(modifier) {
         AsyncImage(
             model = model,
             contentDescription = null,
             contentScale = ContentScale.Crop,
-            alpha = 0.7f,
-            modifier = Modifier.fillMaxSize().blur(36.dp),
+            alpha = if (sharp) 0.6f else 0.7f,
+            onError = onError?.let { { _ -> it() } },
+            modifier = if (sharp) Modifier.fillMaxSize() else Modifier.fillMaxSize().blur(36.dp),
         )
         Box(
             Modifier
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
-                        0f to background.copy(alpha = 0.3f),
-                        0.6f to background.copy(alpha = 0.75f),
+                        0f to background.copy(alpha = if (sharp) 0.45f else 0.3f),
+                        0.6f to background.copy(alpha = if (sharp) 0.85f else 0.75f),
                         1f to background,
                     ),
                 ),
@@ -111,6 +122,8 @@ internal fun DetailBackdrop(model: Any?, modifier: Modifier = Modifier) {
 @Composable
 internal fun DetailHero(
     backdropModel: Any?,
+    sharpBackdrop: Boolean,
+    onBackdropError: () -> Unit,
     posterModel: Any?,
     contentDescription: String,
     positionMs: Long?,
@@ -119,7 +132,7 @@ internal fun DetailHero(
     content: @Composable () -> Unit,
 ) {
     Box(Modifier.fillMaxWidth()) {
-        DetailBackdrop(backdropModel, Modifier.matchParentSize())
+        DetailBackdrop(backdropModel, Modifier.matchParentSize(), sharp = sharpBackdrop, onError = onBackdropError)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -156,15 +169,40 @@ internal fun DetailHero(
 }
 
 /// Title, what it is, and the quick facts, in falling order of weight.
+/// With a [logoModel] the title is drawn as its logo, falling back to the
+/// text if the hub has no cached logo after all.
 @Composable
-internal fun TitleBlock(title: String, meta: String?, rating: Double?, facts: List<String>, genres: List<String>) {
-    Text(
-        title,
-        style = MaterialTheme.typography.headlineSmall,
-        fontWeight = FontWeight.SemiBold,
-        maxLines = 3,
-        overflow = TextOverflow.Ellipsis,
-    )
+internal fun TitleBlock(
+    title: String,
+    meta: String?,
+    rating: Double?,
+    facts: List<String>,
+    genres: List<String>,
+    logoModel: Any? = null,
+) {
+    var logoFailed by remember(logoModel) { mutableStateOf(false) }
+    if (logoModel != null && !logoFailed) {
+        AsyncImage(
+            model = logoModel,
+            contentDescription = title,
+            contentScale = ContentScale.Fit,
+            alignment = Alignment.CenterStart,
+            onError = { logoFailed = true },
+            // A fixed box, so the header doesn't jump when the logo lands.
+            modifier = Modifier
+                .widthIn(max = 320.dp)
+                .fillMaxWidth()
+                .height(72.dp),
+        )
+    } else {
+        Text(
+            title,
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
     if (!meta.isNullOrBlank()) {
         Text(
             meta,
@@ -545,11 +583,12 @@ private fun formatTimestamp(ms: Long): String {
 
 private const val MAX_CAST = 20
 
-/// Who's in it. The hub has names and roles but no headshots, so each
-/// person gets their initials in a circle. Focusable only so a D-pad can
-/// scroll the row.
+/// Who's in it: each person's headshot in a circle, over their initials,
+/// which show through when there is no photo or the hub hasn't cached it.
+/// [headshotUrl] maps a credit's id to its photo. Focusable only so a
+/// D-pad can scroll the row.
 @Composable
-internal fun CastRow(cast: List<Credit>, modifier: Modifier = Modifier) {
+internal fun CastRow(cast: List<Credit>, headshotUrl: (person: String) -> String?, modifier: Modifier = Modifier) {
     Column(modifier) {
         SectionTitle(stringResource(R.string.detail_cast), modifier = Modifier.padding(horizontal = 16.dp))
         LazyRow(
@@ -574,6 +613,16 @@ internal fun CastRow(cast: List<Credit>, modifier: Modifier = Modifier) {
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(initials(credit.name), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        val person = credit.id
+                        val image = credit.image
+                        if (person != null && image != null) {
+                            AsyncImage(
+                                model = rememberArtworkModel(headshotUrl(person), image),
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
                     }
                     Text(
                         credit.name,
