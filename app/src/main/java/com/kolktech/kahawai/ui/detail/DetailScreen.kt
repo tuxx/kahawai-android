@@ -410,7 +410,14 @@ private fun DetailContent(
     }
 
     val seasonGroup = selectedSeason?.let { selected -> state.seasons.find { it.number == selected.number } }
-    val posterModel = seasonArtworkModel(repo, detail.libraryId, detail.id, seasonGroup)
+    // An episode without a still of its own shows its season's cover.
+    val episodeWithoutStill = detail.kind == ItemKind.EPISODE && detail.metadata?.artwork == null
+    fun posterOf(size: String) = if (episodeWithoutStill) {
+        repo.episodeArtworkUrl(detail.libraryId, detail.id, detail.parentId, detail.season, hasStill = false, size = size)
+    } else {
+        null
+    }
+    val posterModel = posterOf("card") ?: seasonArtworkModel(repo, detail.libraryId, detail.id, seasonGroup)
     // A real backdrop is the title's (an episode or season page shows its
     // show's) and is shown as is; without one, or until the hub has cached
     // it, the poster stands in, blurred.
@@ -421,7 +428,7 @@ private fun DetailContent(
         // The original: the named sizes are poster-sized, soft across a TV.
         rememberArtworkModel(repo.artworkUrl(detail.libraryId, detail.id, kind = ArtworkKind.BACKDROP), backdropSource)
     } else {
-        seasonArtworkModel(repo, detail.libraryId, detail.id, seasonGroup, size = "thumb")
+        posterOf("thumb") ?: seasonArtworkModel(repo, detail.libraryId, detail.id, seasonGroup, size = "thumb")
     }
     // An episode's own title is the heading, so the show's logo is only
     // drawn for the show and the movie themselves.

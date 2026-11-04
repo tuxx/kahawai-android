@@ -1476,7 +1476,13 @@ private fun PlayerContent(
                                 if (it == 0) localResources.getString(R.string.detail_season_specials) else localResources.getString(R.string.detail_season, it)
                             },
                             title = listOfNotNull(episode.episode?.let { "$it." }, episode.title).joinToString(" "),
-                            artworkUrl = catalogRepo.artworkUrl(episode.libraryId, episode.id, "card"),
+                            artworkUrl = catalogRepo.episodeArtworkUrl(
+                                episode.libraryId,
+                                episode.id,
+                                episode.parentId,
+                                episode.season,
+                                hasStill = episode.artwork != null,
+                            ),
                             resumePositionMs = episode.resumePositionMs,
                             resumeDurationMs = episode.resumeDurationMs,
                             played = episode.played,
