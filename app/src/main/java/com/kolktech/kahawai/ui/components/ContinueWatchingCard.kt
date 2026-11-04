@@ -52,7 +52,8 @@ private val CARD_ASPECT_RATIO = 16f / 9f
 /// shaped (2:3), which reads as "browse the library" rather than "pick up
 /// where you left off". It shows landscape art where there is some: an
 /// episode's own still, else the title's backdrop. Only without either is
-/// the `card` poster cropped into the 16:9 box.
+/// the `card` poster cropped into the 16:9 box — for an episode without a
+/// still, its season's (see [CatalogRepository.episodeArtworkUrl]).
 @Composable
 fun ContinueWatchingCard(
     item: Item,
@@ -174,6 +175,8 @@ private fun landscapeArtworkModel(item: Item, repo: CatalogRepository, useBackdr
     return if (backdrop != null && !(item.kind == ItemKind.EPISODE && item.artwork != null)) {
         // An episode id serves its show's backdrop.
         rememberArtworkModel(repo.artworkUrl(item.libraryId, item.id, "card", kind = ArtworkKind.BACKDROP), backdrop)
+    } else if (item.kind == ItemKind.EPISODE) {
+        repo.episodeArtworkUrl(item.libraryId, item.id, item.parentId, item.season, hasStill = item.artwork != null)
     } else {
         repo.artworkUrl(item.libraryId, item.id, "card")
     }

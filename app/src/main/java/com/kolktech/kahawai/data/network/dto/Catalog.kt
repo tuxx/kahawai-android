@@ -469,6 +469,9 @@ data class ItemMetadata(
     val premiered: String? = null,
     val genres: List<String>? = null,
     val cast: List<Credit>? = null,
+    /// The item's own first artwork source (an episode's still); null when
+    /// the hub has none to serve for it.
+    val artwork: String? = null,
     /// Title-level images: an episode's are its show's, as the hub serves
     /// them for a child id.
     val logo: String? = null,
@@ -534,6 +537,7 @@ private fun Description.toMetadata(title: Description = this) = ItemMetadata(
     premiered = releaseDate,
     genres = genres,
     cast = cast,
+    artwork = artwork?.firstOrNull(),
     logo = title.logo,
     backdrop = title.backdrop,
 )

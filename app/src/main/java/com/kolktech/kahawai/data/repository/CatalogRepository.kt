@@ -264,6 +264,23 @@ class CatalogRepository(apiProvider: () -> ApiService = { ApiClient.apiService()
         return "${base}api/v1/catalogue/libraries/$libraryId/items/$id/artwork$query"
     }
 
+    /// An episode's own artwork asks the hub for its still, which is a 404
+    /// when it has none: without one, [hasStill] false, this asks for its
+    /// season's cover instead, which the hub itself falls back to the show's
+    /// poster for. A null [season] is the absolute-numbered group.
+    fun episodeArtworkUrl(
+        libraryId: String,
+        id: String,
+        parentId: String?,
+        season: Int?,
+        hasStill: Boolean,
+        size: String? = "card",
+    ): String? = if (hasStill || parentId == null) {
+        artworkUrl(libraryId, id, size)
+    } else {
+        artworkUrl(libraryId, parentId, size, season = season?.toString() ?: "absolute")
+    }
+
     /// A cast member's headshot. `person` is the credit's provider-qualified
     /// id; the hub only serves people in this item's own resolved cast (an
     /// episode's means its show's), and only from its cache.
