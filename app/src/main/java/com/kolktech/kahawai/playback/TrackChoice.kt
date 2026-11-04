@@ -195,6 +195,21 @@ internal fun pickSubtitleTrack(wishlist: List<String>, tracks: List<SubtitleTrac
 internal fun rememberedSubsValue(track: SubtitleTrack?): String =
     track?.let { (it.language ?: "any").lowercase() } ?: "off"
 
+/// The track the next episode opens with when the one before it was
+/// watched with [carried] — a [rememberedSubsValue], since a track id names
+/// a position in one file and lands on whatever language sits there in the
+/// next. Null for `off`, or when this episode doesn't have that language.
+/// Unlike a wishlist, this follows a pick the viewer just made, so a
+/// bitmap track rendered client-side counts too: someone watching English
+/// PGS wants English PGS in the next episode, not nothing.
+internal fun carriedSubtitleTrack(carried: String, tracks: List<SubtitleTrack>): SubtitleTrack? {
+    if (carried == "off") return null
+    pickSubtitleTrack(listOf(carried), tracks)?.let { return it }
+    return tracks.firstOrNull {
+        it.delivery == "overlay" && (carried == "any" || (it.language ?: "").lowercase().take(2) == carried.take(2))
+    }
+}
+
 /// What a pick writes to this item's memory. Empty deletes the row, which is
 /// what "no exact track here" means.
 internal fun rememberedSubsTrackValue(track: SubtitleTrack?): String = track?.id?.toString() ?: ""

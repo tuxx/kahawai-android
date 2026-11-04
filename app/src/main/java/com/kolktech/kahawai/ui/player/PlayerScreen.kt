@@ -223,12 +223,16 @@ fun PlayerScreen(
     /// The top bar's home button: leaves the player and everything
     /// stacked under it in one go.
     onHome: () -> Unit,
-    onNextEpisode: (itemId: String, subtitleTrackId: Long?) -> Unit = { _, _ -> },
+    /// [subtitleLanguage] is the current pick as
+    /// PlayerViewModel.carriedSubtitleLanguage spells it — a language,
+    /// never a track id, which only means something within one file.
+    onNextEpisode: (itemId: String, subtitleLanguage: String) -> Unit = { _, _ -> },
     /// Any other episode of the show, from the side panel's episode list,
     /// opened at [startMs] (its resume point, or 0).
-    onPlayEpisode: (itemId: String, startMs: Long, subtitleTrackId: Long?) -> Unit = { _, _, _ -> },
+    onPlayEpisode: (itemId: String, startMs: Long, subtitleLanguage: String) -> Unit = { _, _, _ -> },
     initialAudioTrack: Int = -1,
     initialSubtitleTrackId: Long? = null,
+    initialSubtitleLanguage: String? = null,
     libraryId: String,
     prefetch: PlaybackPrefetch? = null,
 ) {
@@ -239,7 +243,17 @@ fun PlayerScreen(
         key = itemId,
         factory = viewModelFactory {
             initializer {
-                PlayerViewModel(application, repo, itemId, startMs, initialAudioTrack, initialSubtitleTrackId, libraryId, prefetch)
+                PlayerViewModel(
+                    application,
+                    repo,
+                    itemId,
+                    startMs,
+                    initialAudioTrack,
+                    initialSubtitleTrackId,
+                    initialSubtitleLanguage,
+                    libraryId,
+                    prefetch,
+                )
             }
         },
     )
@@ -250,7 +264,7 @@ fun PlayerScreen(
     // season doesn't need to be redone every episode.
     val nextEpisodeId by viewModel.nextEpisodeId.collectAsState()
     LaunchedEffect(nextEpisodeId) {
-        nextEpisodeId?.let { id -> onNextEpisode(id, viewModel.selectedSubtitleTrack.value?.id) }
+        nextEpisodeId?.let { id -> onNextEpisode(id, viewModel.carriedSubtitleLanguage()) }
     }
 
     // Pause immediately on the way out so the video isn't still actively
@@ -416,8 +430,8 @@ private fun PlayerContent(
     appSettingsStore: AppSettingsStore,
     onClose: () -> Unit,
     onHome: () -> Unit,
-    onNextEpisode: (itemId: String, subtitleTrackId: Long?) -> Unit,
-    onPlayEpisode: (itemId: String, startMs: Long, subtitleTrackId: Long?) -> Unit,
+    onNextEpisode: (itemId: String, subtitleLanguage: String) -> Unit,
+    onPlayEpisode: (itemId: String, startMs: Long, subtitleLanguage: String) -> Unit,
 ) {
     val context = LocalContext.current
     // Strings for the side panel and skip button: configuration-aware,
@@ -650,7 +664,7 @@ private fun PlayerContent(
     fun takeSkipOffer(taken: SkipOffer) {
         val nextId = taken.nextEpisodeId
         if (nextId != null) {
-            onNextEpisode(nextId, viewModel.selectedSubtitleTrack.value?.id)
+            onNextEpisode(nextId, viewModel.carriedSubtitleLanguage())
         } else {
             taken.targetMs?.let { viewModel.player.seekTo(it) }
         }
@@ -1287,8 +1301,8 @@ private fun PlayerContent(
         // Episodes / Next episode stay gone until the show's episode list
         // resolves — a movie, or the last episode of a show for Next,
         // leaves the button hidden rather than shown-but-useless.
-        // subtitleTrack id rides along so the next episode opens with the
-        // same language already selected.
+        // The subtitle LANGUAGE rides along so the next episode opens with
+        // the same one already selected.
         val episodes by viewModel.episodes.collectAsState()
         LaunchedEffect(adjacentEpisodes, episodes, playerView) {
             val nextId = adjacentEpisodes?.nextId
@@ -1296,7 +1310,7 @@ private fun PlayerContent(
             playerView?.findViewById<View>(R.id.kw_next_episode)?.apply {
                 isVisible = nextId != null
                 setOnClickListener {
-                    nextId?.let { onNextEpisode(it, viewModel.selectedSubtitleTrack.value?.id) }
+                    nextId?.let { onNextEpisode(it, viewModel.carriedSubtitleLanguage()) }
                 }
             }
         }
@@ -1501,7 +1515,7 @@ private fun PlayerContent(
                     // The one already playing just carries on.
                     if (episode.id != viewModel.itemId) {
                         val startMs = episode.resumePositionMs?.takeIf { !episode.played } ?: 0L
-                        onPlayEpisode(episode.id, startMs, viewModel.selectedSubtitleTrack.value?.id)
+                        onPlayEpisode(episode.id, startMs, viewModel.carriedSubtitleLanguage())
                     }
                 },
             )

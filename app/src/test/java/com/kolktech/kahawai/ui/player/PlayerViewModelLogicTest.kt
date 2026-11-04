@@ -248,22 +248,33 @@ class PlayerViewModelLogicTest {
 
     @Test
     fun `matches a track id rewritten with a MergingMediaPeriod child prefix`() {
-        assertEquals(true, matchesSideloadedTrackId(formatId = "1:1234", wantedId = "1234"))
+        assertEquals(true, matchesSideloadedTrackId(formatId = "1:kahawai-sub-1234", trackId = 1234))
     }
 
     @Test
     fun `matches a plain track id with no prefix`() {
-        assertEquals(true, matchesSideloadedTrackId(formatId = "1234", wantedId = "1234"))
+        assertEquals(true, matchesSideloadedTrackId(formatId = "kahawai-sub-1234", trackId = 1234))
     }
 
     @Test
     fun `does not match a different track id`() {
-        assertEquals(false, matchesSideloadedTrackId(formatId = "1:1234", wantedId = "5678"))
+        assertEquals(false, matchesSideloadedTrackId(formatId = "1:kahawai-sub-1234", trackId = 5678))
     }
 
     @Test
     fun `does not match a null format id`() {
-        assertEquals(false, matchesSideloadedTrackId(formatId = null, wantedId = "1234"))
+        assertEquals(false, matchesSideloadedTrackId(formatId = null, trackId = 1234))
+    }
+
+    @Test
+    fun `does not match the container's own track of the same number`() {
+        // Matroska ids its tracks by number: video 1, audio 2, first subtitle 3.
+        assertEquals(false, matchesSideloadedTrackId(formatId = "0:3", trackId = 3))
+    }
+
+    @Test
+    fun `keeps a negative track id intact`() {
+        assertEquals(true, matchesSideloadedTrackId(formatId = "1:kahawai-sub--2", trackId = -2))
     }
 
     // subtitleVttUrl
