@@ -247,4 +247,32 @@ class TrackChoiceTest {
         assertEquals("1", rememberedSubsTrackValue(track(1)))
         assertEquals("", rememberedSubsTrackValue(null))
     }
+
+    @Test
+    fun `a carried language finds that language whatever its id`() {
+        // Episode 1 had English at id 2; in episode 2 id 2 is German.
+        val next = listOf(track(1, "nl"), track(2, "de"), track(3, "en"))
+        assertEquals(3L, carriedSubtitleTrack("en", next)?.id)
+    }
+
+    @Test
+    fun `a carried off opens with none`() {
+        assertNull(carriedSubtitleTrack("off", listOf(track(1, "en"))))
+    }
+
+    @Test
+    fun `a carried language the episode lacks finds nothing`() {
+        assertNull(carriedSubtitleTrack("en", listOf(track(1, "de"))))
+    }
+
+    @Test
+    fun `a carried language follows a client-rendered bitmap pick`() {
+        val next = listOf(track(1, "de"), track(2, "en", delivery = "overlay", format = "pgs"))
+        assertEquals(2L, carriedSubtitleTrack("en", next)?.id)
+    }
+
+    @Test
+    fun `a carried language never orders a burn`() {
+        assertNull(carriedSubtitleTrack("en", listOf(track(1, "en", delivery = "burn", format = "pgs"))))
+    }
 }

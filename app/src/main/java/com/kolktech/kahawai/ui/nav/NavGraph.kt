@@ -73,7 +73,7 @@ private object Routes {
     const val DETAIL = "detail/{itemId}?library={library}&season={season}"
     const val PLAYER =
         "player/{itemId}?startMs={startMs}&audioTrack={audioTrack}&subtitleTrack={subtitleTrack}" +
-            "&library={library}&prefetch={prefetch}"
+            "&subtitleLang={subtitleLang}&library={library}&prefetch={prefetch}"
     fun library(libraryId: String, name: String) = "library/$libraryId?name=${Uri.encode(name)}"
     /// [libraryId] is carried the way the web client carries it in the
     /// URL, and is required rather than optional: every catalogue route is
@@ -99,6 +99,12 @@ private object Routes {
         "player/$itemId?startMs=$startMs&audioTrack=$audioTrack&subtitleTrack=${subtitleTrackId ?: NO_SUBTITLE_TRACK}" +
             "&library=$libraryId" +
             "&prefetch=${prefetch?.let { Uri.encode(apiJson.encodeToString(PlaybackPrefetch.serializer(), it)) }.orEmpty()}"
+    /// Another episode of the show the player is on (auto-advance, the
+    /// in-player episode buttons). Carries the subtitle LANGUAGE rather
+    /// than a track id: the hub numbers tracks by position within each
+    /// file, so the same id in the next episode can be another language.
+    fun episodePlayer(itemId: String, startMs: Long, subtitleLanguage: String, libraryId: String) =
+        "player/$itemId?startMs=$startMs&audioTrack=-1&subtitleLang=${Uri.encode(subtitleLanguage)}&library=$libraryId"
 }
 
 @Composable
@@ -365,6 +371,7 @@ fun KahawaiNavGraph(app: KahawaiApp, modifier: Modifier = Modifier) {
                     type = NavType.LongType
                     defaultValue = Routes.NO_SUBTITLE_TRACK
                 },
+                navArgument("subtitleLang") { type = NavType.StringType; defaultValue = "" },
                 navArgument("library") { type = NavType.StringType; defaultValue = "" },
                 navArgument("prefetch") { type = NavType.StringType; defaultValue = "" },
             ),
@@ -374,6 +381,7 @@ fun KahawaiNavGraph(app: KahawaiApp, modifier: Modifier = Modifier) {
             val audioTrack = backStackEntry.arguments?.getInt("audioTrack") ?: -1
             val subtitleTrack =
                 backStackEntry.arguments?.getLong("subtitleTrack") ?: Routes.NO_SUBTITLE_TRACK
+            val subtitleLang = backStackEntry.arguments?.getString("subtitleLang")?.takeIf { it.isNotEmpty() }
             // An episode is in the same library as the one that opened it,
             // so this rides the whole way through a binge (see Routes.detail).
             val libraryId = backStackEntry.arguments?.getString("library")
@@ -392,6 +400,7 @@ fun KahawaiNavGraph(app: KahawaiApp, modifier: Modifier = Modifier) {
                 // Only the sentinel means "none" — a negative id is a real
                 // embedded track (see Routes.NO_SUBTITLE_TRACK).
                 initialSubtitleTrackId = subtitleTrack.takeIf { it != Routes.NO_SUBTITLE_TRACK },
+                initialSubtitleLanguage = subtitleLang,
                 libraryId = libraryId,
                 prefetch = prefetch,
                 onClose = { navController.popBackStack() },
@@ -404,20 +413,20 @@ fun KahawaiNavGraph(app: KahawaiApp, modifier: Modifier = Modifier) {
                 // screen the user started watching from, instead of
                 // walking back through every previously-watched episode's
                 // leftover detail entry.
-                onNextEpisode = { nextItemId, nextSubtitleTrackId ->
+                onNextEpisode = { nextItemId, subtitleLanguage ->
                     navController.navigate(Routes.detail(nextItemId, libraryId)) {
                         popUpTo(Routes.DETAIL) { inclusive = true }
                     }
-                    navController.navigate(Routes.player(nextItemId, 0L, -1, nextSubtitleTrackId, libraryId))
+                    navController.navigate(Routes.episodePlayer(nextItemId, 0L, subtitleLanguage, libraryId))
                 },
                 // Same back-stack rewrite as onNextEpisode, for any
                 // episode picked from the player's episode list, opened
                 // at its resume point.
-                onPlayEpisode = { episodeItemId, episodeStartMs, episodeSubtitleTrackId ->
+                onPlayEpisode = { episodeItemId, episodeStartMs, subtitleLanguage ->
                     navController.navigate(Routes.detail(episodeItemId, libraryId)) {
                         popUpTo(Routes.DETAIL) { inclusive = true }
                     }
-                    navController.navigate(Routes.player(episodeItemId, episodeStartMs, -1, episodeSubtitleTrackId, libraryId))
+                    navController.navigate(Routes.episodePlayer(episodeItemId, episodeStartMs, subtitleLanguage, libraryId))
                 },
             )
         }

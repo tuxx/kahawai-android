@@ -70,6 +70,7 @@ import com.kolktech.kahawai.playback.PREF_SUBS
 import com.kolktech.kahawai.playback.PREF_SUBS_TRACK
 import com.kolktech.kahawai.playback.rememberedSubsTrackValue
 import com.kolktech.kahawai.playback.rememberedSubsValue
+import com.kolktech.kahawai.playback.carriedSubtitleTrack
 import com.kolktech.kahawai.playback.resolveSubtitleTrack
 import com.kolktech.kahawai.playback.sourcePreferenceScope
 import okhttp3.Request
@@ -215,13 +216,22 @@ internal fun computeOriginCorrection(
     return OriginCorrection(correctedOffsetMs = corrected, inBounds = inBounds)
 }
 
+/// The id a sideloaded VTT config carries. Namespaced, not the bare hub
+/// track id: a direct session's container exposes its own embedded text
+/// tracks beside the sideloaded one, and Matroska ids those by track
+/// NUMBER — video 1, audio 2, then the subtitles. The hub numbers its
+/// listing from 1 per file, so a bare "3" (the third subtitle) matched the
+/// container's track 3 (its first subtitle) and showed the wrong language.
+internal fun sideloadedTrackId(trackId: Long): String = "kahawai-sub-$trackId"
+
 /// MergingMediaPeriod re-exposes every child source's formats with the id
 /// rewritten to "<childIndex>:<originalId>" (see
 /// [PlayerViewModel.applySubtitleTrackSelectionOverride]) — a sideloaded
-/// VTT config's id "1234" surfaces here as e.g. "1:1234", so matching must
-/// strip that prefix rather than compare exactly.
-internal fun matchesSideloadedTrackId(formatId: String?, wantedId: String): Boolean =
-    formatId?.substringAfterLast(':') == wantedId
+/// VTT config's id "kahawai-sub-1234" surfaces here as e.g.
+/// "1:kahawai-sub-1234", so matching must strip that prefix rather than
+/// compare exactly.
+internal fun matchesSideloadedTrackId(formatId: String?, trackId: Long): Boolean =
+    formatId?.substringAfterLast(':') == sideloadedTrackId(trackId)
 
 /// The sample MIME types a bitmap subtitle track can reach the player's
 /// own track list as. Two spellings, because media3 parses subtitles at
@@ -453,6 +463,13 @@ class PlayerViewModel(
     /// carries no track, and the remembered preferences answer instead.
     private val initialAudioTrack: Int = -1,
     private val initialSubtitleTrackId: Long? = null,
+    /// The previous episode's subtitle language ([rememberedSubsValue]),
+    /// carried by auto-advance and the in-player episode buttons instead of
+    /// a track id — ids are positions within one file, so the same id in
+    /// the next episode can be a different language. Wins over the
+    /// remembered preferences, whose write of that same pick may not have
+    /// landed yet.
+    private val initialSubtitleLanguage: String? = null,
     /// Which library this item was opened from, carried by the route: the
     /// item's own detail doesn't name one, and without it the account's
     /// per-media-type track lists can't be found at all — see TrackChoice.
@@ -1100,16 +1117,21 @@ class PlayerViewModel(
                     // source it chose; an index carried in from the route
                     // (an explicit pick) still wins.
                     if (initialAudioTrack < 0) audioTrack = choice?.audioTrack ?: 0
-                    initialTrack = tracks.firstOrNull { it.id == initialSubtitleTrackId }
-                        ?: prefs.await().let { known ->
-                            resolveSubtitleTrack(
-                                prefs = known,
-                                seriesId = seriesId ?: itemId,
-                                sourceScope = querySourceScope,
-                                mediaType = mediaType(known),
-                                tracks = tracks,
-                            )
-                        }
+                    suspend fun remembered(): SubtitleTrack? = prefs.await().let { known ->
+                        resolveSubtitleTrack(
+                            prefs = known,
+                            seriesId = seriesId ?: itemId,
+                            sourceScope = querySourceScope,
+                            mediaType = mediaType(known),
+                            tracks = tracks,
+                        )
+                    }
+                    val carriedLanguage = initialSubtitleLanguage
+                    initialTrack = when {
+                        carriedLanguage == "off" -> null
+                        carriedLanguage != null -> carriedSubtitleTrack(carriedLanguage, tracks) ?: remembered()
+                        else -> tracks.firstOrNull { it.id == initialSubtitleTrackId } ?: remembered()
+                    }
                 }
                 _selectedSubtitleTrack.value = initialTrack
                 // Logged like the session start below: which track a title
@@ -1119,7 +1141,7 @@ class PlayerViewModel(
                 Log.d(
                     TAG,
                     "tracks resolved item=$itemId series=$seriesId library=$libraryId prefetched=${prefetched != null} " +
-                        "audio=$audioTrack subtitle=${initialTrack?.id} (carried sub=$initialSubtitleTrackId)",
+                        "audio=$audioTrack subtitle=${initialTrack?.id} (carried sub=$initialSubtitleTrackId lang=$initialSubtitleLanguage)",
                 )
                 // See startSessionAndAttach's doc for the offsetMs/
                 // startPositionMs reasoning (direct vs remux/transcode).
@@ -1739,7 +1761,7 @@ class PlayerViewModel(
                 MediaItem.SubtitleConfiguration.Builder(Uri.parse(vttUrl))
                     .setMimeType(MimeTypes.TEXT_VTT)
                     .setLanguage(track.language)
-                    .setId(track.id.toString())
+                    .setId(sideloadedTrackId(track.id))
                     .build()
             }
     }
@@ -1802,12 +1824,12 @@ class PlayerViewModel(
                 // bytecode), so the sideloaded VTT config's id "1234"
                 // surfaces here as e.g. "1:1234" and an exact comparison
                 // never matched — the override was silently skipped and
-                // text tracks never turned on. The hub's HLS playlists carry
-                // no subtitle renditions of their own, so every TEXT group
-                // is one of ours and suffix matching is unambiguous.
-                val wantedId = textTrack.id.toString()
+                // text tracks never turned on. A direct session's container
+                // brings its own embedded TEXT groups alongside ours, which
+                // is why the id is namespaced (see sideloadedTrackId).
+                val wantedId = sideloadedTrackId(textTrack.id)
                 val group = groups.firstOrNull {
-                    matchesSideloadedTrackId(it.mediaTrackGroup.getFormat(0).id, wantedId)
+                    matchesSideloadedTrackId(it.mediaTrackGroup.getFormat(0).id, textTrack.id)
                 }
                 // Log.i, not Log.d: the vivo test device suppresses D-level
                 // logcat output entirely, and this is the one line that says
@@ -1979,6 +2001,10 @@ class PlayerViewModel(
     /// picks in quick succession commit in the order they were made — each
     /// write is whole-state for its key, so the LAST one to land is the one
     /// that sticks.
+    /// What the next episode should open with: the current pick's
+    /// language, never its id (see [initialSubtitleLanguage]).
+    fun carriedSubtitleLanguage(): String = rememberedSubsValue(_selectedSubtitleTrack.value)
+
     private fun rememberSubtitlePick(track: SubtitleTrack?) {
         val series = seriesId ?: return
         val previous = prefsJob
