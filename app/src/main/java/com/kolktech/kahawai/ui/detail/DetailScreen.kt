@@ -75,6 +75,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -82,12 +83,13 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.window.core.layout.WindowSizeClass
 import coil3.compose.AsyncImage
-import coil3.request.ImageRequest
 import com.kolktech.kahawai.R
+import com.kolktech.kahawai.data.network.dto.ArtworkKind
 import com.kolktech.kahawai.data.network.dto.CatalogueChildGroup
 import com.kolktech.kahawai.data.network.dto.ClientAudioStream
 import com.kolktech.kahawai.data.network.dto.ClientVideoStream
 import com.kolktech.kahawai.data.network.dto.Item
+import com.kolktech.kahawai.data.network.dto.ItemKind
 import com.kolktech.kahawai.data.network.dto.SubtitleTrack
 import com.kolktech.kahawai.data.network.dto.negotiatedSource
 import com.kolktech.kahawai.data.repository.CatalogRepository
@@ -97,6 +99,7 @@ import com.kolktech.kahawai.ui.components.ErrorView
 import com.kolktech.kahawai.ui.components.OnResumeEffect
 import com.kolktech.kahawai.ui.components.PosterCard
 import com.kolktech.kahawai.ui.components.WatchProgressBar
+import com.kolktech.kahawai.ui.components.rememberArtworkModel
 import com.kolktech.kahawai.ui.player.PlaybackPrefetch
 import com.kolktech.kahawai.ui.player.PrefetchSource
 import com.kolktech.kahawai.ui.player.audioCodecName
@@ -408,7 +411,26 @@ private fun DetailContent(
 
     val seasonGroup = selectedSeason?.let { selected -> state.seasons.find { it.number == selected.number } }
     val posterModel = seasonArtworkModel(repo, detail.libraryId, detail.id, seasonGroup)
-    val backdropModel = seasonArtworkModel(repo, detail.libraryId, detail.id, seasonGroup, size = "thumb")
+    // A real backdrop is the title's (an episode or season page shows its
+    // show's) and is shown as is; without one, or until the hub has cached
+    // it, the poster stands in, blurred.
+    var backdropFailed by remember(detail.metadata?.backdrop) { mutableStateOf(false) }
+    val backdropSource = detail.metadata?.backdrop?.takeUnless { backdropFailed }
+    val onBackdropError = { backdropFailed = true }
+    val backdropModel = if (backdropSource != null) {
+        // The original: the named sizes are poster-sized, soft across a TV.
+        rememberArtworkModel(repo.artworkUrl(detail.libraryId, detail.id, kind = ArtworkKind.BACKDROP), backdropSource)
+    } else {
+        seasonArtworkModel(repo, detail.libraryId, detail.id, seasonGroup, size = "thumb")
+    }
+    // An episode's own title is the heading, so the show's logo is only
+    // drawn for the show and the movie themselves.
+    val logoSource = detail.metadata?.logo?.takeIf { detail.kind == ItemKind.MOVIE || detail.kind == ItemKind.SHOW }
+    val logoModel = if (logoSource != null) {
+        rememberArtworkModel(repo.artworkUrl(detail.libraryId, detail.id, "card", kind = ArtworkKind.LOGO), logoSource)
+    } else {
+        null
+    }
 
     // What PlayerViewModel would otherwise spend its own itemQuery round
     // trip re-deriving — this screen already has it (see PlaybackPrefetch).
@@ -438,6 +460,7 @@ private fun DetailContent(
         val remainingMs = runtimeMs?.minus(detail.resumePositionMs?.coerceAtLeast(0) ?: 0)?.coerceAtLeast(0)
         TitleBlock(
             title = detail.title,
+            logoModel = logoModel,
             meta = listOfNotNull(
                 detail.parentTitle,
                 seasonLabel,
@@ -550,11 +573,19 @@ private fun DetailContent(
                     onOpenItem,
                     onPlay = if (child.kind == "episode") ({ onPlayEpisode(child.id, child.resumePositionMs ?: 0) }) else null,
                     focusRequester = if (index == 0 && state.nextUp == null) firstChildFocusRequester else null,
+                    thumbnail = if (child.kind == "episode") ({ episodeThumbnail(repo, child, detail.metadata?.backdrop) }) else null,
+                    thumbnailWidth = if (useTwoPane) 200.dp else 136.dp,
                 )
             }
         }
         detail.metadata?.cast?.takeIf { it.isNotEmpty() }?.let { cast ->
-            item { CastRow(cast, Modifier.padding(top = 24.dp)) }
+            item {
+                CastRow(
+                    cast,
+                    headshotUrl = { person -> repo.castArtworkUrl(detail.libraryId, detail.id, person, "card1x") },
+                    modifier = Modifier.padding(top = 24.dp),
+                )
+            }
         }
         item { Spacer(Modifier.height(24.dp)) }
     }
@@ -570,7 +601,12 @@ private fun DetailContent(
             // the first row is reliably composed immediately instead of
             // being deferred below the fold.
             BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                DetailBackdrop(backdropModel, Modifier.matchParentSize())
+                DetailBackdrop(
+                    backdropModel,
+                    sharp = backdropSource != null,
+                    onError = onBackdropError,
+                    modifier = Modifier.matchParentSize(),
+                )
                 // Full-height 2:3 poster where the window is short (landscape
                 // phone/TV — the poster column fills the height exactly), but
                 // never more than 40% of the width, so a tall window (portrait
@@ -619,6 +655,8 @@ private fun DetailContent(
                     Column {
                         DetailHero(
                             backdropModel = backdropModel,
+                            sharpBackdrop = backdropSource != null,
+                            onBackdropError = onBackdropError,
                             posterModel = posterModel,
                             contentDescription = detail.title,
                             positionMs = detail.resumePositionMs,
@@ -683,11 +721,8 @@ private fun seasonLabel(number: Int?): String = when (number) {
     else -> stringResource(R.string.detail_season, number)
 }
 
-/// A season's cover URL stays the same while the hub backfills its art
-/// (the hub keys its own cache off the resolved artwork), so the client
-/// cache key carries the summary's artwork value: it changes, and the
-/// cover reloads, only when new art actually arrives. Until then a
-/// return from the player is served from Coil's caches without a flash.
+/// A season's cover while the hub backfills its art: keyed by the
+/// summary's artwork value (see [rememberArtworkModel]).
 @Composable
 private fun seasonArtworkModel(
     repo: CatalogRepository,
@@ -699,16 +734,7 @@ private fun seasonArtworkModel(
     val artwork = group?.metadata?.description?.artwork
     if (artwork.isNullOrEmpty()) return repo.artworkUrl(library, parent, size)
     val url = repo.artworkUrl(library, parent, size, season = group.number?.toString() ?: "absolute")
-        ?: return null
-    val context = LocalContext.current
-    return remember(context, url, artwork) {
-        val key = "$url#${artwork.joinToString("|")}"
-        ImageRequest.Builder(context)
-            .data(url)
-            .memoryCacheKey(key)
-            .diskCacheKey(key)
-            .build()
-    }
+    return rememberArtworkModel(url, artwork.joinToString("|"))
 }
 
 /// The show's seasons as poster boxes, laid out like the library grid. Rows
@@ -763,6 +789,10 @@ private fun ChildRow(
     /// Starts it straight from the list; null for rows that only open.
     onPlay: (() -> Unit)?,
     focusRequester: FocusRequester? = null,
+    /// An episode's picture, drawn as a 16:9 still in place of the number
+    /// circle; null keeps the circle (tracks).
+    thumbnail: (@Composable () -> Any?)? = null,
+    thumbnailWidth: Dp = 136.dp,
 ) {
     var focused by remember { mutableStateOf(false) }
     // Requested from here rather than by the caller: inside a lazy list,
@@ -788,28 +818,32 @@ private fun ChildRow(
             )
             .clickable { onOpenItem(child.id, child.libraryId) }
             .padding(horizontal = 8.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = if (thumbnail != null) Alignment.Top else Alignment.CenterVertically,
     ) {
-        // The number, or a tick once it's watched — the list reads as a
-        // checklist of where the viewer is.
-        Box(
-            Modifier
-                .size(40.dp)
-                .clip(CircleShape)
-                .background(
-                    if (child.played) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant,
-                ),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (child.played) {
-                Icon(
-                    Icons.Filled.Check,
-                    contentDescription = stringResource(R.string.watched),
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(20.dp),
-                )
-            } else {
-                Text(child.episode?.toString() ?: "•", style = MaterialTheme.typography.titleSmall)
+        if (thumbnail != null) {
+            EpisodeStill(child, thumbnail(), Modifier.width(thumbnailWidth))
+        } else {
+            // The number, or a tick once it's watched — the list reads as a
+            // checklist of where the viewer is.
+            Box(
+                Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (child.played) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant,
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (child.played) {
+                    Icon(
+                        Icons.Filled.Check,
+                        contentDescription = stringResource(R.string.watched),
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp),
+                    )
+                } else {
+                    Text(child.episode?.toString() ?: "•", style = MaterialTheme.typography.titleSmall)
+                }
             }
         }
         Spacer(Modifier.width(14.dp))
@@ -834,7 +868,8 @@ private fun ChildRow(
                     modifier = Modifier.padding(top = 2.dp),
                 )
             }
-            if (resumeMs != null) {
+            // The still carries the progress line when there is one.
+            if (resumeMs != null && thumbnail == null) {
                 WatchProgressBar(
                     positionMs = child.resumePositionMs,
                     durationMs = child.resumeDurationMs,
@@ -842,10 +877,20 @@ private fun ChildRow(
                     modifier = Modifier.padding(top = 6.dp).clip(CircleShape),
                 )
             }
+            child.overview?.takeIf { it.isNotBlank() && thumbnail != null }?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
         }
         if (onPlay != null) {
             Spacer(Modifier.width(8.dp))
-            IconButton(onClick = onPlay, modifier = Modifier.dpadFocusBorder()) {
+            IconButton(onClick = onPlay, modifier = Modifier.align(Alignment.CenterVertically).dpadFocusBorder()) {
                 Icon(
                     Icons.Filled.PlayArrow,
                     contentDescription = stringResource(R.string.detail_play),
@@ -853,5 +898,77 @@ private fun ChildRow(
                 )
             }
         }
+    }
+}
+
+private val STILL_SHAPE = RoundedCornerShape(8.dp)
+
+/// An episode's still, else its show's backdrop, keyed by the source the
+/// description names (see [rememberArtworkModel]). Without either there is
+/// nothing to ask the hub for, so the still's own fallback shows.
+@Composable
+private fun episodeThumbnail(repo: CatalogRepository, episode: Item, showBackdrop: String?): Any? {
+    val still = episode.artwork
+    return when {
+        still != null -> rememberArtworkModel(repo.artworkUrl(episode.libraryId, episode.id, "card"), still)
+        // An episode id serves its show's backdrop.
+        showBackdrop != null -> rememberArtworkModel(
+            repo.artworkUrl(episode.libraryId, episode.id, "card", kind = ArtworkKind.BACKDROP),
+            showBackdrop,
+        )
+        else -> null
+    }
+}
+
+/// The 16:9 picture leading an episode row. The episode number sits
+/// underneath and shows through while the image loads or when there is
+/// none; a watched episode gets a tick in the corner, a started one the
+/// progress line along the bottom.
+@Composable
+private fun EpisodeStill(episode: Item, model: Any?, modifier: Modifier = Modifier) {
+    Box(
+        modifier
+            .aspectRatio(16f / 9f)
+            .clip(STILL_SHAPE)
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            episode.episode?.toString() ?: "•",
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (model != null) {
+            AsyncImage(
+                model = model,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        if (episode.played) {
+            Box(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp)
+                    .size(22.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.Check,
+                    contentDescription = stringResource(R.string.watched),
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(14.dp),
+                )
+            }
+        }
+        WatchProgressBar(
+            positionMs = episode.resumePositionMs,
+            durationMs = episode.resumeDurationMs,
+            played = episode.played,
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
     }
 }

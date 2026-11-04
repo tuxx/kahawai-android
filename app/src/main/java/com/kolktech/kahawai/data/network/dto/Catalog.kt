@@ -28,8 +28,15 @@ data class LibrarySummary(
     val collectionIds: List<String> = emptyList(),
 )
 
+/// `id` is provider-qualified ("tmdb:123") and, with `image`, is what the
+/// cast headshot route needs; a credit without either has no photo.
 @Serializable
-data class Credit(val name: String, val role: String? = null)
+data class Credit(
+    val name: String,
+    val role: String? = null,
+    val id: String? = null,
+    val image: String? = null,
+)
 
 /// The descriptive fields a provider chain resolved, field by field.
 /// `releaseDate` is what the client used to call `premiered`.
@@ -42,6 +49,12 @@ data class Description(
     val releaseDate: String? = null,
     val genres: List<String>? = null,
     val artwork: List<String>? = null,
+    /// The selected logo/banner/backdrop source, one each. The hub serves
+    /// them by `kind` on the artwork route, from its cache only, so these
+    /// are what tells a client there is anything to ask for.
+    val logo: String? = null,
+    val banner: String? = null,
+    val backdrop: String? = null,
     val cast: List<Credit>? = null,
 )
 
@@ -402,6 +415,15 @@ object ItemKind {
     const val TRACK = "track"
 }
 
+/// The artwork route's `kind`s beyond the default poster (`ArtworkKind` in
+/// crates/kahawai-hub/src/api/catalogue.rs). `still` isn't here: the
+/// default already serves an episode its own still.
+object ArtworkKind {
+    const val LOGO = "logo"
+    const val BANNER = "banner"
+    const val BACKDROP = "backdrop"
+}
+
 /// One browse/search/children row. `libraryId` is required now: every
 /// catalogue route is library-scoped, so a row that could not name its
 /// library would be a row that cannot be opened.
@@ -422,6 +444,13 @@ data class Item(
     val resumePositionMs: Long? = null,
     val resumeDurationMs: Long? = null,
     val played: Boolean = false,
+    /// The row's own first artwork source (an episode's still), and its
+    /// title's backdrop source. Both double as cache keys: the hub's URL
+    /// stays put while its art changes underneath.
+    val artwork: String? = null,
+    val backdrop: String? = null,
+    /// A child's own synopsis, for the episode list.
+    val overview: String? = null,
 )
 
 @Serializable
@@ -440,6 +469,10 @@ data class ItemMetadata(
     val premiered: String? = null,
     val genres: List<String>? = null,
     val cast: List<Credit>? = null,
+    /// Title-level images: an episode's are its show's, as the hub serves
+    /// them for a child id.
+    val logo: String? = null,
+    val backdrop: String? = null,
 )
 
 /// The detail-page model. Carries [libraryId] because the page's own
@@ -494,13 +527,15 @@ private fun ChildPosition.episodeNumber(): Int? = when (this) {
     is ChildPosition.UnnumberedTrack -> null
 }
 
-private fun Description.toMetadata() = ItemMetadata(
+private fun Description.toMetadata(title: Description = this) = ItemMetadata(
     overview = overview,
     originalLanguage = originalLanguage,
     rating = rating,
     premiered = releaseDate,
     genres = genres,
     cast = cast,
+    logo = title.logo,
+    backdrop = title.backdrop,
 )
 
 fun CatalogueItem.toItem(libraryId: String) = Item(
@@ -515,6 +550,8 @@ fun CatalogueItem.toItem(libraryId: String) = Item(
     resumePositionMs = resumePositionMs,
     resumeDurationMs = resumeDurationMs,
     played = played,
+    artwork = metadata.description.artwork?.firstOrNull(),
+    backdrop = metadata.description.backdrop,
 )
 
 fun LibraryChild.toItem(libraryId: String, watch: WatchState? = null, parentTitle: String? = null) = Item(
@@ -532,6 +569,8 @@ fun LibraryChild.toItem(libraryId: String, watch: WatchState? = null, parentTitl
     resumePositionMs = watch?.resumePositionMs,
     resumeDurationMs = watch?.resumeDurationMs,
     played = watch?.played ?: false,
+    artwork = metadata.description.artwork?.firstOrNull(),
+    overview = metadata.description.overview,
 )
 
 /// A feed row points at whatever is actually resumable: the episode when
@@ -554,6 +593,8 @@ fun FeedItem.toItem(): Item = child?.let { c ->
         resumePositionMs = resumePositionMs,
         resumeDurationMs = resumeDurationMs,
         played = played,
+        artwork = c.metadata.description.artwork?.firstOrNull(),
+        backdrop = metadata.description.backdrop,
     )
 } ?: Item(
     id = id,
@@ -568,6 +609,8 @@ fun FeedItem.toItem(): Item = child?.let { c ->
     resumePositionMs = resumePositionMs,
     resumeDurationMs = resumeDurationMs,
     played = played,
+    artwork = metadata.description.artwork?.firstOrNull(),
+    backdrop = metadata.description.backdrop,
 )
 
 fun CatalogueDetail.toDetail(libraryId: String): ItemDetail {
@@ -590,7 +633,7 @@ fun CatalogueDetail.toDetail(libraryId: String): ItemDetail {
         resumePositionMs = resumePositionMs,
         resumeDurationMs = resumeDurationMs,
         played = played,
-        metadata = description.toMetadata(),
+        metadata = description.toMetadata(title = metadata.description),
         negotiated = negotiated,
         unavailable = unavailable,
         chapters = chapters,

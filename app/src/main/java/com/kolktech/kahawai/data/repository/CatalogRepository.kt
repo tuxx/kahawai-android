@@ -246,12 +246,31 @@ class CatalogRepository(apiProvider: () -> ApiService = { ApiClient.apiService()
     /// `season` selects a season's own cover, using the same selector as
     /// [children]: a season number, or "absolute" for the absolute-numbered
     /// group. Null asks for the item's own artwork.
-    fun artworkUrl(libraryId: String, id: String, size: String? = null, season: String? = null): String? {
+    ///
+    /// `kind` is one of [ArtworkKind]; null is the poster (an episode's
+    /// still). The other kinds are served from the hub's cache only, so ask
+    /// for one only when the description names a source for it.
+    fun artworkUrl(
+        libraryId: String,
+        id: String,
+        size: String? = null,
+        season: String? = null,
+        kind: String? = null,
+    ): String? {
         val base = ApiClient.baseUrlOrNull() ?: return null
-        val query = listOfNotNull(size?.let { "size=$it" }, season?.let { "season=$it" })
+        val query = listOfNotNull(size?.let { "size=$it" }, season?.let { "season=$it" }, kind?.let { "kind=$it" })
             .joinToString("&")
             .let { if (it.isEmpty()) "" else "?$it" }
         return "${base}api/v1/catalogue/libraries/$libraryId/items/$id/artwork$query"
+    }
+
+    /// A cast member's headshot. `person` is the credit's provider-qualified
+    /// id; the hub only serves people in this item's own resolved cast (an
+    /// episode's means its show's), and only from its cache.
+    fun castArtworkUrl(libraryId: String, id: String, person: String, size: String? = null): String? {
+        val base = ApiClient.baseUrlOrNull() ?: return null
+        val query = size?.let { "?size=$it" } ?: ""
+        return "${base}api/v1/catalogue/libraries/$libraryId/items/$id/cast/$person/artwork$query"
     }
 
     private companion object {

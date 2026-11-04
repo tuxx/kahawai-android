@@ -37,7 +37,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.kolktech.kahawai.R
+import com.kolktech.kahawai.data.network.dto.ArtworkKind
 import com.kolktech.kahawai.data.network.dto.Item
+import com.kolktech.kahawai.data.network.dto.ItemKind
 import com.kolktech.kahawai.data.repository.CatalogRepository
 import com.kolktech.kahawai.ui.theme.KahawaiOnSurfaceVariant
 import com.kolktech.kahawai.ui.theme.KahawaiOutline
@@ -46,12 +48,11 @@ import com.kolktech.kahawai.ui.theme.KahawaiSurface
 private val CARD_SHAPE = RoundedCornerShape(8.dp)
 private val CARD_ASPECT_RATIO = 16f / 9f
 
-/// A wide, cropped-poster tile for the continue-watching row — [PosterCard]
-/// is bluray-case shaped (2:3), which reads as "browse the library" rather
-/// than "pick up where you left off". The hub has no separate landscape
-/// artwork (crates/kahawai-hub/src/artwork.rs's `SIZES` are all posters), so
-/// this crops the same `card` image into a 16:9 box instead of fetching a
-/// different asset.
+/// A wide tile for the continue-watching row — [PosterCard] is bluray-case
+/// shaped (2:3), which reads as "browse the library" rather than "pick up
+/// where you left off". It shows landscape art where there is some: an
+/// episode's own still, else the title's backdrop. Only without either is
+/// the `card` poster cropped into the 16:9 box.
 @Composable
 fun ContinueWatchingCard(
     item: Item,
@@ -90,8 +91,11 @@ fun ContinueWatchingCard(
                     shape = CARD_SHAPE,
                 ),
         ) {
+            // A backdrop the hub hasn't cached yet falls back to the poster.
+            var backdropFailed by remember(item.backdrop) { mutableStateOf(false) }
             AsyncImage(
-                model = repo.artworkUrl(item.libraryId, item.id, "card"),
+                model = landscapeArtworkModel(item, repo, useBackdrop = !backdropFailed),
+                onError = { backdropFailed = true },
                 contentDescription = item.title,
                 contentScale = ContentScale.Crop,
                 // Same fallback whether the poster is still loading or the
@@ -162,4 +166,15 @@ private fun seasonEpisodeLabel(season: Int?, episode: Int?): String? {
     if (season == null && episode == null) return null
     val e = "E%02d".format(episode ?: 0)
     return if (season == null) e else "S%02d%s".format(season, e)
+}
+
+@Composable
+private fun landscapeArtworkModel(item: Item, repo: CatalogRepository, useBackdrop: Boolean): Any? {
+    val backdrop = item.backdrop?.takeIf { useBackdrop }
+    return if (backdrop != null && !(item.kind == ItemKind.EPISODE && item.artwork != null)) {
+        // An episode id serves its show's backdrop.
+        rememberArtworkModel(repo.artworkUrl(item.libraryId, item.id, "card", kind = ArtworkKind.BACKDROP), backdrop)
+    } else {
+        repo.artworkUrl(item.libraryId, item.id, "card")
+    }
 }

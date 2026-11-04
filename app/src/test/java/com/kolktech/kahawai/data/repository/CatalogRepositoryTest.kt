@@ -1,7 +1,9 @@
 package com.kolktech.kahawai.data.repository
 
 import com.kolktech.kahawai.data.network.ApiClient
+import com.kolktech.kahawai.data.network.dto.ArtworkKind
 import com.kolktech.kahawai.data.network.dto.CapabilityProfile
+import com.kolktech.kahawai.data.network.dto.Credit
 import com.kolktech.kahawai.data.network.dto.TargetDuration
 import com.kolktech.kahawai.testutil.buildTestApiService
 import io.mockk.every
@@ -552,5 +554,90 @@ class CatalogRepositoryTest {
         } finally {
             unmockkObject(ApiClient)
         }
+    }
+
+    @Test
+    fun `artworkUrl names a kind and castArtworkUrl a person`() {
+        mockkObject(ApiClient)
+        every { ApiClient.baseUrlOrNull() } returns "https://hub/"
+        try {
+            assertEquals(
+                "https://hub/api/v1/catalogue/libraries/lib1/items/show1/artwork?size=card&kind=logo",
+                repository.artworkUrl("lib1", "show1", size = "card", kind = ArtworkKind.LOGO),
+            )
+            assertEquals(
+                "https://hub/api/v1/catalogue/libraries/lib1/items/child1:ep1/artwork?kind=backdrop",
+                repository.artworkUrl("lib1", "child1:ep1", kind = ArtworkKind.BACKDROP),
+            )
+            assertEquals(
+                "https://hub/api/v1/catalogue/libraries/lib1/items/show1/cast/tmdb:123/artwork?size=card1x",
+                repository.castArtworkUrl("lib1", "show1", "tmdb:123", size = "card1x"),
+            )
+        } finally {
+            unmockkObject(ApiClient)
+        }
+    }
+
+    @Test
+    fun `an episode carries its own still and cast but its show's logo and backdrop`() = runTest {
+        server.enqueue(
+            MockResponse().setBody(
+                """
+                {
+                  "id":"show1","kind":"series","media_type":"series","title":"Show",
+                  "representative_id":"c1:1","copy_ids":["c1:1"],
+                  "metadata":{"description":{
+                    "artwork":["https://img/poster.jpg"],"logo":"https://img/logo.png",
+                    "banner":"https://img/banner.jpg","backdrop":"https://img/backdrop.jpg"
+                  },"provenance":{}},
+                  "child":{
+                    "id":"child1:ep1","parent_id":"show1","representative_id":"c1:5",
+                    "title":"Pilot","position":{"kind":"episode","season":1,"episode":1},
+                    "source_count":1,"metadata":{"description":{
+                      "artwork":["https://img/still.jpg"],
+                      "cast":[{"name":"A Person","role":"Lead","id":"tmdb:123","image":"https://img/a.jpg"},{"name":"No Photo"}]
+                    },"provenance":{}}
+                  },
+                  "parent_title":"Show","sources":[],"chapters":[],"copies":[]
+                }
+                """.trimIndent(),
+            ),
+        )
+
+        val metadata = repository.item("lib1", "child1:ep1").metadata!!
+
+        assertEquals("https://img/logo.png", metadata.logo)
+        assertEquals("https://img/backdrop.jpg", metadata.backdrop)
+        assertEquals(Credit("A Person", "Lead", "tmdb:123", "https://img/a.jpg"), metadata.cast!![0])
+        assertEquals(Credit("No Photo"), metadata.cast!![1])
+    }
+
+    @Test
+    fun `a continue watching episode keeps its still and its show's backdrop`() = runTest {
+        server.enqueue(
+            MockResponse().setBody(
+                """
+                {
+                  "items":[{
+                    "id":"show1","kind":"series","media_type":"series","title":"Show",
+                    "representative_id":"c1:1","copy_ids":["c1:1"],
+                    "metadata":{"description":{"backdrop":"https://img/backdrop.jpg"},"provenance":{}},
+                    "library_id":"lib1",
+                    "child":{
+                      "id":"child1:ep3","parent_id":"show1","representative_id":"c1:7","title":"Three",
+                      "position":{"kind":"episode","season":1,"episode":3},"source_count":1,
+                      "metadata":{"description":{"artwork":["https://img/still.jpg"]},"provenance":{}}
+                    }
+                  }],
+                  "total":1,"limit":10,"offset":0
+                }
+                """.trimIndent(),
+            ),
+        )
+
+        val row = repository.continueWatching(limit = 10).items[0]
+
+        assertEquals("https://img/still.jpg", row.artwork)
+        assertEquals("https://img/backdrop.jpg", row.backdrop)
     }
 }
