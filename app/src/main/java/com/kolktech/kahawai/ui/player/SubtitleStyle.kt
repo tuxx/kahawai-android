@@ -41,24 +41,30 @@ internal val TEXT_SUBTITLE_STYLE = CaptionStyleCompat(
     null,
 )
 
-/// The same style, dimmed, for while an HDR picture is on screen.
+/// The white that anything drawn over the video uses while an HDR picture
+/// is on screen: subtitle cues here, and the skip pill (SkipPill and the
+/// controller's kw_skip).
 ///
-/// Cues are drawn into the app's SDR UI layer, which the compositor maps
-/// into the HDR signal being sent to the panel. Full-scale white there is
-/// not "paper white": it is the top of the SDR range mapped into a picture
-/// whose highlights run to a thousand nits and beyond, which is how a line
-/// of dialogue ends up glaring off a dark scene like a torch.
+/// The app's UI is an SDR layer, which the compositor maps into the HDR
+/// signal being sent to the panel. Full-scale white there is not "paper
+/// white": it is the top of the SDR range mapped into a picture whose
+/// highlights run to a thousand nits and beyond, which is how a line of
+/// dialogue, or a pill-shaped button, ends up glaring off a dark scene
+/// like a torch.
 ///
 /// 75% is where ITU-R BT.2408 puts HDR reference white (203 cd/m² — the
-/// level graphics, captions and titles are meant to sit at), so that is
-/// what the glyphs get. The outline stays pure black: it is there to
+/// level graphics, captions and titles are meant to sit at). 0xBF = 191 =
+/// 75% of full scale, written as a literal because Color.rgb() is a real
+/// platform call and the styles here are top-level vals: a JVM unit test
+/// that so much as reads one would die initialising it.
+internal const val HDR_REFERENCE_WHITE: Int = 0xFFBFBFBF.toInt()
+
+/// The same style, dimmed to [HDR_REFERENCE_WHITE] for while an HDR
+/// picture is on screen. The outline stays pure black: it is there to
 /// separate the text from whatever is behind it, and black has no
 /// brightness to give back.
 internal val TEXT_SUBTITLE_STYLE_HDR = CaptionStyleCompat(
-    // 0xBF = 191 = 75% of full scale, written as a literal because
-    // Color.rgb() is a real platform call and these are top-level vals:
-    // a JVM unit test that so much as reads one would die initialising it.
-    0xFFBFBFBF.toInt(),
+    HDR_REFERENCE_WHITE,
     Color.TRANSPARENT,
     Color.TRANSPARENT,
     CaptionStyleCompat.EDGE_TYPE_OUTLINE,
