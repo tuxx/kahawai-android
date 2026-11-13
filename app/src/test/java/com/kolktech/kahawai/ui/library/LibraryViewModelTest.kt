@@ -4,6 +4,8 @@ import app.cash.turbine.test
 import com.kolktech.kahawai.data.repository.CatalogRepository
 import com.kolktech.kahawai.testutil.MainDispatcherRule
 import com.kolktech.kahawai.testutil.buildTestApiService
+import com.kolktech.kahawai.testutil.isSearchOf
+import com.kolktech.kahawai.testutil.searchAnswer
 import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -39,7 +41,10 @@ class LibraryViewModelTest {
     fun `load succeeds and requests the given library`() = runTest {
         server.enqueue(
             MockResponse().setBody(
-                """{"items":[{"id":"i1","kind":"movie","media_type":"movies","title":"Arrival","representative_id":"c1:1","copy_ids":["c1:1"],"metadata":{"description":{},"provenance":{}},"played":false}],"total":1,"limit":40,"offset":0}""",
+                searchAnswer(
+                    "lib1",
+                    """{"items":[{"id":"i1","kind":"movie","media_type":"movies","title":"Arrival","representative_id":"c1:1","copy_ids":["c1:1"],"metadata":{"description":{},"provenance":{}},"played":false}],"total":1,"limit":40,"offset":0}""",
+                ),
             ),
         )
 
@@ -51,7 +56,7 @@ class LibraryViewModelTest {
             val loaded = item as LibraryState.Loaded
             assertEquals(1, loaded.items.size)
         }
-        assertTrue(server.takeRequest().path!!.startsWith("/api/v1/catalogue/libraries/lib1/items"))
+        assertTrue(isSearchOf(server.takeRequest().path, "lib1"))
     }
 
     @Test
@@ -72,10 +77,10 @@ class LibraryViewModelTest {
     fun `loadMore appends items and clears the loadingMore flag`() = runTest {
         server.enqueue(
             MockResponse().setBody(
-                """
+                searchAnswer("lib1", """
                 {"items":[{"id":"i1","kind":"movie","media_type":"movies","title":"One","representative_id":"c1:1","copy_ids":["c1:1"],"metadata":{"description":{},"provenance":{}},"played":false},{"id":"i2","kind":"movie","media_type":"movies","title":"Two","representative_id":"c1:1","copy_ids":["c1:1"],"metadata":{"description":{},"provenance":{}},"played":false}],
                  "total":3,"limit":40,"offset":0}
-                """.trimIndent(),
+                """.trimIndent()),
             ),
         )
         val viewModel = LibraryViewModel(repo(), libraryId = "lib1")
@@ -88,7 +93,7 @@ class LibraryViewModelTest {
 
             server.enqueue(
                 MockResponse().setBody(
-                    """{"items":[{"id":"i3","kind":"movie","media_type":"movies","title":"Three","representative_id":"c1:1","copy_ids":["c1:1"],"metadata":{"description":{},"provenance":{}},"played":false}],"total":3,"limit":40,"offset":2}""",
+                    searchAnswer("lib1", """{"items":[{"id":"i3","kind":"movie","media_type":"movies","title":"Three","representative_id":"c1:1","copy_ids":["c1:1"],"metadata":{"description":{},"provenance":{}},"played":false}],"total":3,"limit":40,"offset":2}"""),
                 ),
             )
             viewModel.loadMore()
@@ -106,7 +111,7 @@ class LibraryViewModelTest {
     fun `loadMore is a no-op once every item is already loaded`() = runTest {
         server.enqueue(
             MockResponse().setBody(
-                """{"items":[{"id":"i1","kind":"movie","media_type":"movies","title":"One","representative_id":"c1:1","copy_ids":["c1:1"],"metadata":{"description":{},"provenance":{}},"played":false}],"total":1,"limit":40,"offset":0}""",
+                searchAnswer("lib1", """{"items":[{"id":"i1","kind":"movie","media_type":"movies","title":"One","representative_id":"c1:1","copy_ids":["c1:1"],"metadata":{"description":{},"provenance":{}},"played":false}],"total":1,"limit":40,"offset":0}"""),
             ),
         )
         val viewModel = LibraryViewModel(repo(), libraryId = "lib1")

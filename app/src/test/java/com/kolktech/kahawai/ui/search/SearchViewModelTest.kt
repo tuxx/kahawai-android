@@ -5,6 +5,7 @@ import app.cash.turbine.test
 import com.kolktech.kahawai.data.repository.CatalogRepository
 import com.kolktech.kahawai.testutil.MainDispatcherRule
 import com.kolktech.kahawai.testutil.buildTestApiService
+import com.kolktech.kahawai.testutil.searchAnswer
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.MockResponse
@@ -68,9 +69,8 @@ class SearchViewModelTest {
 
     private fun newViewModel(): SearchViewModel = SearchViewModel(repo()).also { viewModel = it }
 
-    /// Search has no cross-library route on the hub, so it lists the
-    /// libraries and asks each one. That makes response order a race, so
-    /// these route by path instead of enqueuing a FIFO queue.
+    /// Routed by path rather than a FIFO queue, so a stray request (a
+    /// library list, say) can't take a page meant for the search.
     private fun itemsBody(title: String) =
         """{"items":[{"id":"i1","kind":"movie","media_type":"movies","title":"$title","representative_id":"c1:1","copy_ids":["c1:1"],"metadata":{"description":{},"provenance":{}},"played":false}],"total":1,"limit":60,"offset":0}"""
 
@@ -82,11 +82,11 @@ class SearchViewModelTest {
         server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
             override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): MockResponse = when {
                 request.path == "/api/v1/catalogue/libraries" -> MockResponse().setBody(oneLibrary)
-                request.path?.startsWith("/api/v1/catalogue/libraries/lib1/items") == true ->
+                request.path?.startsWith("/api/v1/catalogue/search?") == true ->
                     if (pages.isEmpty()) {
                         MockResponse().setResponseCode(500).setBody("boom")
                     } else {
-                        MockResponse().setBody(pages.removeAt(0))
+                        MockResponse().setBody(searchAnswer("lib1", pages.removeAt(0)))
                     }
                 else -> MockResponse().setResponseCode(404)
             }
@@ -123,8 +123,8 @@ class SearchViewModelTest {
 
     @Test
     fun `a query change failing with 401 reports auth error`() = runTest {
-        // An auth failure must survive the per-library fan-out rather than
-        // being swallowed into an empty result set.
+        // An auth failure must reach the screen rather than being swallowed
+        // into an empty result set.
         server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
             override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest) =
                 if (request.path == "/api/v1/catalogue/libraries") {

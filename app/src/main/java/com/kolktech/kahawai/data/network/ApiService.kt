@@ -1,10 +1,9 @@
 package com.kolktech.kahawai.data.network
 
 import com.kolktech.kahawai.data.network.dto.BootstrapResponse
-import com.kolktech.kahawai.data.network.dto.CatalogueArtists
 import com.kolktech.kahawai.data.network.dto.CatalogueChildren
 import com.kolktech.kahawai.data.network.dto.CatalogueDetail
-import com.kolktech.kahawai.data.network.dto.CatalogueItems
+import com.kolktech.kahawai.data.network.dto.CatalogueSearch
 import com.kolktech.kahawai.data.network.dto.CatalogueSeasons
 import com.kolktech.kahawai.data.network.dto.FeedItems
 import com.kolktech.kahawai.data.network.dto.ItemQueryRequest
@@ -64,18 +63,24 @@ interface ApiService {
     @GET("api/v1/catalogue/libraries")
     suspend fun libraries(): List<LibrarySummary>
 
-    /// Browse/search one library. `q` is a per-library search: the hub has
-    /// no cross-library item route, so searching everything means fanning
-    /// out over [libraries] (see CatalogRepository.search).
-    @GET("api/v1/catalogue/libraries/{id}/items")
-    suspend fun items(
-        @Path("id") library: String,
+    /// Every catalogue listing, browse and search alike (an empty `q` is a
+    /// browse): any set of [libraries] (comma-separated; every library the
+    /// viewer may see when null) and [kinds] (`items`, `artists`, `tracks`;
+    /// every kind each library holds when null) in one request, each
+    /// library-and-kind paged by [limit]/[offset] with an exact total. The
+    /// hub asks them concurrently. [sort] needs exactly one kind and
+    /// [artist] needs `kinds=items`. All or nothing: a library that cannot
+    /// be answered fails the whole request.
+    @GET("api/v1/catalogue/search")
+    suspend fun search(
         @Query("q") q: String? = null,
+        @Query("libraries") libraries: String? = null,
+        @Query("kinds") kinds: String? = null,
         @Query("sort") sort: String? = null,
         @Query("artist") artist: String? = null,
         @Query("limit") limit: Int? = null,
         @Query("offset") offset: Int? = null,
-    ): CatalogueItems
+    ): CatalogueSearch
 
     /// Started and not finished, most recently watched first — the home
     /// screen's continue-watching row. Its own order, so no `sort`/`q`;
@@ -155,13 +160,6 @@ interface ApiService {
     /// CatalogRepository.nextItem to tell the two apart.
     @GET("api/v1/catalogue/libraries/{library}/items/{id}/next")
     suspend fun nextItem(@Path("library") library: String, @Path("id") id: String): JsonElement
-
-    @GET("api/v1/catalogue/libraries/{library}/artists")
-    suspend fun artists(
-        @Path("library") library: String,
-        @Query("limit") limit: Int? = null,
-        @Query("offset") offset: Int? = null,
-    ): CatalogueArtists
 
     /// Subtitle search and download are bound to the physical rendition
     /// named by [com.kolktech.kahawai.data.network.dto.SubtitleSource],

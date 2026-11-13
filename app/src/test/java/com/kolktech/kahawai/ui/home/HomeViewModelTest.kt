@@ -4,6 +4,8 @@ import app.cash.turbine.test
 import com.kolktech.kahawai.data.repository.CatalogRepository
 import com.kolktech.kahawai.testutil.MainDispatcherRule
 import com.kolktech.kahawai.testutil.buildTestApiService
+import com.kolktech.kahawai.testutil.isSearchOf
+import com.kolktech.kahawai.testutil.searchAnswer
 import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
@@ -56,7 +58,7 @@ class HomeViewModelTest {
         MockResponse().setBody("""[{"id":"lib1","name":"Movies","media_type":"movies"}]""")
 
     private fun libraryItems(title: String) = MockResponse().setBody(
-        """{"items":[{"id":"i1","kind":"movie","media_type":"movies","title":"$title","representative_id":"c1:1","copy_ids":["c1:1"],"metadata":{"description":{},"provenance":{}},"played":false}],"total":1,"limit":20,"offset":0}""",
+        searchAnswer("lib1", """{"items":[{"id":"i1","kind":"movie","media_type":"movies","title":"$title","representative_id":"c1:1","copy_ids":["c1:1"],"metadata":{"description":{},"provenance":{}},"played":false}],"total":1,"limit":20,"offset":0}"""),
     )
 
     private val emptyUpNext = MockResponse().setBody("""{"items":[],"total":0,"limit":12,"offset":0}""")
@@ -65,7 +67,7 @@ class HomeViewModelTest {
         { r: RecordedRequest -> r.path?.startsWith("/api/v1/catalogue/continue-watching") == true } to noneInProgress,
         { r: RecordedRequest -> r.path?.startsWith("/api/v1/catalogue/up-next") == true } to emptyUpNext,
         { r: RecordedRequest -> r.path == "/api/v1/catalogue/libraries" } to oneLibrary,
-        { r: RecordedRequest -> r.path?.startsWith("/api/v1/catalogue/libraries/lib1/items") == true } to libraryResponse,
+        { r: RecordedRequest -> isSearchOf(r.path, "lib1") } to libraryResponse,
     )
 
     @Test
@@ -102,7 +104,7 @@ class HomeViewModelTest {
             { r: RecordedRequest -> r.path?.startsWith("/api/v1/catalogue/continue-watching") == true } to noneInProgress,
             { r: RecordedRequest -> r.path?.startsWith("/api/v1/catalogue/up-next") == true } to upNext,
             { r: RecordedRequest -> r.path == "/api/v1/catalogue/libraries" } to oneLibrary,
-            { r: RecordedRequest -> r.path?.startsWith("/api/v1/catalogue/libraries/lib1/items") == true }
+            { r: RecordedRequest -> isSearchOf(r.path, "lib1") }
                 to libraryItems("Arrival"),
         )
 
