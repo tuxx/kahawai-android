@@ -33,7 +33,9 @@ internal fun skipOfferIcon(offer: SkipOffer): Int =
 /// controls are hidden; the controller's kw_skip button is its twin for
 /// while they're up (same look, same spot). The bright part of the fill
 /// drains right to left as [remaining] runs from 1 to 0, counting down to
-/// the pill hiding itself.
+/// the pill hiding itself. While [hdr] (an HDR picture on screen) the
+/// whites are [HDR_REFERENCE_WHITE], as the subtitles are; the label and
+/// icon stay black.
 ///
 /// Never focusable: with the controls hidden the remote's OK key takes the
 /// offer directly (see PlayerContent's key routing), so there's no focus
@@ -43,16 +45,18 @@ internal fun SkipPill(
     label: String,
     @DrawableRes icon: Int,
     remaining: () -> Float,
+    hdr: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val white = if (hdr) Color(HDR_REFERENCE_WHITE) else Color.White
     Row(
         modifier = modifier
             .height(42.dp)
             .clip(CircleShape)
             .drawBehind {
-                drawRect(Color.White.copy(alpha = 0.7f))
-                drawRect(Color.White, size = size.copy(width = size.width * remaining().coerceIn(0f, 1f)))
+                drawRect(white.copy(alpha = 0.7f))
+                drawRect(white, size = size.copy(width = size.width * remaining().coerceIn(0f, 1f)))
             }
             .focusProperties { canFocus = false }
             .clickable(role = Role.Button, onClick = onClick)

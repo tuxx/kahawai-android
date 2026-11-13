@@ -8,6 +8,8 @@ import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
+import android.graphics.PorterDuff
 import android.media.AudioManager
 import android.os.Build
 import android.os.SystemClock
@@ -1224,6 +1226,17 @@ private fun PlayerContent(
                 if (hdrActive) TEXT_SUBTITLE_STYLE_HDR else TEXT_SUBTITLE_STYLE,
             )
         }
+        // The controller's skip pill (kw_skip) dims with them. Multiplying
+        // its all-white background by reference white turns every white in
+        // it — fill, pressed fill, focus ring — into the same fraction of
+        // itself and keeps each one's alpha; the floating SkipPill below
+        // takes hdrActive directly.
+        LaunchedEffect(hdrActive, playerView) {
+            playerView?.findViewById<View>(R.id.kw_skip)?.apply {
+                backgroundTintMode = PorterDuff.Mode.MULTIPLY
+                backgroundTintList = if (hdrActive) ColorStateList.valueOf(HDR_REFERENCE_WHITE) else null
+            }
+        }
         LaunchedEffect(cueInsetPx, playerView) {
             playerView?.let { applyCueBottomPadding(it, cueInsetPx) }
         }
@@ -1405,6 +1418,7 @@ private fun PlayerContent(
                     label = stringResource(shown.labelRes),
                     icon = skipOfferIcon(shown),
                     remaining = { skipCountdown.value },
+                    hdr = hdrActive,
                     onClick = { takeSkipOffer(shown) },
                 )
             }

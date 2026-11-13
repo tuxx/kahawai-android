@@ -37,6 +37,12 @@ class HdrTextSubtitleStyleTest {
         assertEquals(0xFFBFBFBF.toInt(), TEXT_SUBTITLE_STYLE_HDR.foregroundColor)
     }
 
+    /// The skip pill reads the same constant, so the two can't drift.
+    @Test
+    fun `hdr glyphs are the shared overlay reference white`() {
+        assertEquals(HDR_REFERENCE_WHITE, TEXT_SUBTITLE_STYLE_HDR.foregroundColor)
+    }
+
     @Test
     fun `it is dimmer than the SDR style but otherwise identical`() {
         assertTrue(
