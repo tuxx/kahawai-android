@@ -68,11 +68,11 @@ class CatalogRepositoryTest {
     }
 
     @Test
-    fun `items is library-scoped and maps the identity shape onto a row`() = runTest {
+    fun `items asks for one library's items and maps the identity shape onto a row`() = runTest {
         server.enqueue(
             MockResponse().setBody(
                 """
-                {
+                {"libraries":[{"library":{"id":"lib1","name":"Movies","media_type":"movies"},"items":{
                   "items":[{
                     "id":"i1","kind":"movie","media_type":"movies","title":"Arrival",
                     "representative_id":"c1:1","copy_ids":["c1:1","c2:9"],
@@ -80,7 +80,7 @@ class CatalogRepositoryTest {
                     "played":false
                   }],
                   "total":1,"limit":20,"offset":0
-                }
+                }}]}
                 """.trimIndent(),
             ),
         )
@@ -96,7 +96,8 @@ class CatalogRepositoryTest {
         assertEquals(2, row.sources)
         assertEquals("2016-11-11", row.premiered)
         assertEquals(
-            "/api/v1/catalogue/libraries/lib1/items?q=arrival&sort=title&limit=20&offset=0",
+            // One library and one kind of the catalogue's single listing.
+            "/api/v1/catalogue/search?q=arrival&libraries=lib1&kinds=items&sort=title&limit=20&offset=0",
             server.takeRequest().path,
         )
     }
@@ -240,13 +241,7 @@ class CatalogRepositoryTest {
     }
 
     @Test
-    fun `search fans out across libraries because the hub has no global item route`() = runTest {
-        server.enqueue(
-            MockResponse().setBody(
-                """[{"id":"lib1","name":"Movies","media_type":"movies"},""" +
-                    """{"id":"lib2","name":"Series","media_type":"series"}]""",
-            ),
-        )
+    fun `search asks every library in one request`() = runTest {
         val page = { id: String, title: String ->
             """
             {"items":[{"id":"$id","kind":"movie","media_type":"movies","title":"$title",
@@ -255,50 +250,46 @@ class CatalogRepositoryTest {
              "total":1,"limit":20,"offset":0}
             """.trimIndent()
         }
-        server.enqueue(MockResponse().setBody(page("i1", "Arrival")))
-        server.enqueue(MockResponse().setBody(page("i2", "Arrival II")))
+        server.enqueue(
+            MockResponse().setBody(
+                """{"libraries":[""" +
+                    """{"library":{"id":"lib1","name":"Movies","media_type":"movies"},"items":${page("i1", "Arrival")}},""" +
+                    """{"library":{"id":"lib2","name":"Series","media_type":"series"},"items":${page("i2", "Arrival II")}}""" +
+                    """]}""",
+            ),
+        )
 
         val result = repository.search("arrival", limit = 20)
 
         assertEquals(2, result.items.size)
         assertEquals(2, result.total)
         // Each row still knows which library answered for it.
-        assertEquals(setOf("lib1", "lib2"), result.items.map { it.libraryId }.toSet())
-        val paths = List(3) { server.takeRequest().path }
-        assertTrue(paths[0] == "/api/v1/catalogue/libraries")
-        assertEquals(
-            setOf(
-                "/api/v1/catalogue/libraries/lib1/items?q=arrival&limit=20",
-                "/api/v1/catalogue/libraries/lib2/items?q=arrival&limit=20",
-            ),
-            paths.drop(1).toSet(),
-        )
+        assertEquals(listOf("lib1", "lib2"), result.items.map { it.libraryId })
+        assertEquals("/api/v1/catalogue/search?q=arrival&kinds=items&limit=20", server.takeRequest().path)
+        // One round trip, not one per library.
+        assertEquals(1, server.requestCount)
     }
 
     @Test
-    fun `search survives one library failing`() = runTest {
-        server.enqueue(
-            MockResponse().setBody(
-                """[{"id":"lib1","name":"Movies","media_type":"movies"},""" +
-                    """{"id":"lib2","name":"Series","media_type":"series"}]""",
-            ),
-        )
-        server.enqueue(
-            MockResponse().setBody(
-                """
-                {"items":[{"id":"i1","kind":"movie","media_type":"movies","title":"Arrival",
-                  "representative_id":"c:1","copy_ids":["c:1"],
-                  "metadata":{"description":{},"provenance":{}},"played":false}],
-                 "total":1,"limit":20,"offset":0}
-                """.trimIndent(),
-            ),
-        )
-        server.enqueue(MockResponse().setResponseCode(500).setBody("boom"))
+    fun `search fails as a whole when the hub cannot answer it`() = runTest {
+        // All or nothing: results quietly missing a library would read as
+        // fewer matches.
+        server.enqueue(MockResponse().setResponseCode(503).setBody("""{"code":"unavailable","message":"busy"}"""))
 
-        val result = repository.search("arrival", limit = 20)
+        val failure = runCatching { repository.search("arrival", limit = 20) }.exceptionOrNull()
 
-        assertEquals(1, result.items.size)
-        assertEquals("i1", result.items[0].id)
+        assertTrue("$failure", failure is HttpException)
+    }
+
+    @Test
+    fun `a library answered without its items is a contract break, not no matches`() = runTest {
+        server.enqueue(
+            MockResponse().setBody("""{"libraries":[{"library":{"id":"lib1","name":"Movies","media_type":"movies"}}]}"""),
+        )
+
+        val failure = runCatching { repository.items(library = "lib1") }.exceptionOrNull()
+
+        assertTrue("$failure", failure is IllegalStateException)
     }
 
     @Test

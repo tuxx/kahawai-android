@@ -386,16 +386,22 @@ data class WatchUpdate(
 @Serializable
 data class UpdatedResponse(val updated: List<WatchUpdate> = emptyList())
 
+/// `GET /catalogue/search`: one answer per library asked, in the order
+/// asked (or the libraries endpoint's order when none were named).
 @Serializable
-data class ArtistSummary(val key: String, val name: String, val albumCount: Int = 0)
+data class CatalogueSearch(val libraries: List<LibraryHits> = emptyList())
+
+/// One library's answer. [items] is null when items weren't asked for; the
+/// hub's `artists` and `tracks` (music libraries only) aren't modelled,
+/// since this app doesn't ask for them.
+@Serializable
+data class LibraryHits(
+    val library: SearchLibrary,
+    val items: CatalogueItems? = null,
+)
 
 @Serializable
-data class CatalogueArtists(
-    val artists: List<ArtistSummary> = emptyList(),
-    val total: Int = 0,
-    val limit: Int = 0,
-    val offset: Int = 0,
-)
+data class SearchLibrary(val id: String, val name: String, val mediaType: String)
 
 // ---------------------------------------------------------------------------
 // Client-facing models

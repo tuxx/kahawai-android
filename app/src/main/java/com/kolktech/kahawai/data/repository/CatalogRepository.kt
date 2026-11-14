@@ -3,7 +3,6 @@ package com.kolktech.kahawai.data.repository
 import com.kolktech.kahawai.data.network.ApiClient
 import com.kolktech.kahawai.data.network.ApiService
 import com.kolktech.kahawai.data.network.apiJson
-import com.kolktech.kahawai.data.network.isAuthError
 import com.kolktech.kahawai.data.network.dto.CapabilityProfile
 import com.kolktech.kahawai.data.network.dto.CatalogueChildGroup
 import com.kolktech.kahawai.data.network.dto.Item
@@ -22,7 +21,6 @@ import com.kolktech.kahawai.data.network.dto.WatchedRequest
 import com.kolktech.kahawai.data.network.dto.toDetail
 import com.kolktech.kahawai.data.network.dto.toItem
 import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.JsonNull
 import retrofit2.HttpException
@@ -54,8 +52,21 @@ class CatalogRepository(apiProvider: () -> ApiService = { ApiClient.apiService()
         artist: String? = null,
         limit: Int? = null,
         offset: Int? = null,
-    ): ItemsResponse = api.items(library, q, sort, artist, limit, offset).let { page ->
-        ItemsResponse(
+    ): ItemsResponse {
+        val page = api.search(
+            q = q,
+            libraries = library,
+            kinds = "items",
+            sort = sort,
+            artist = artist,
+            limit = limit,
+            offset = offset,
+        ).libraries.singleOrNull { it.library.id == library }?.items
+            // The hub answers every library it was asked for, with every
+            // kind asked for: a hole here is a contract break, not "no
+            // matches".
+            ?: throw IllegalStateException("the hub answered without items for library $library")
+        return ItemsResponse(
             items = page.items.map { it.toItem(library) },
             total = page.total,
             limit = page.limit,
@@ -63,32 +74,24 @@ class CatalogRepository(apiProvider: () -> ApiService = { ApiClient.apiService()
         )
     }
 
-    /// The hub has no cross-library item route — `q` is a parameter on a
-    /// library's own item list — so searching everything means asking each
-    /// library in parallel and merging. `total` is the sum of what the
-    /// libraries reported, which is a count of matches and not of the rows
-    /// returned here once [limit] truncates them.
+    /// Every library the viewer may see, searched in ONE request: the hub
+    /// asks each library concurrently and answers them together, so a slow
+    /// link pays one round trip rather than one per library. [limit] caps
+    /// each library's hits on the hub and the merged list here; `total` is
+    /// the sum of what the libraries reported, a count of matches and not of
+    /// the rows returned once [limit] truncates them.
     ///
-    /// One library failing is tolerated: partial results beat no results,
-    /// and a single offline mediahost shouldn't empty the screen. Two cases
-    /// are not, because both would render as "nothing matched" when the
-    /// truth is "we never found out": an auth failure (the app needs to
-    /// send the viewer back through login, so it is rethrown even if
-    /// another library answered), and every library failing.
-    suspend fun search(q: String, limit: Int? = null): ItemsResponse = coroutineScope {
-        val results = libraries()
-            .map { library -> async { runCatching { items(library.id, q = q, limit = limit) } } }
-            .awaitAll()
-        results.firstNotNullOfOrNull { it.exceptionOrNull()?.takeIf { e -> e.isAuthError() } }
-            ?.let { throw it }
-        val pages = results.mapNotNull { it.getOrNull() }
-        if (pages.isEmpty()) {
-            results.firstNotNullOfOrNull { it.exceptionOrNull() }?.let { throw it }
+    /// All or nothing: a library the hub can't answer fails the search,
+    /// rather than results quietly missing a library reading as fewer
+    /// matches.
+    suspend fun search(q: String, limit: Int? = null): ItemsResponse {
+        val pages = api.search(q = q, kinds = "items", limit = limit).libraries.mapNotNull { hits ->
+            hits.items?.let { page -> hits.library.id to page }
         }
-        val merged = pages.flatMap { it.items }
-        ItemsResponse(
+        val merged = pages.flatMap { (library, page) -> page.items.map { it.toItem(library) } }
+        return ItemsResponse(
             items = limit?.let { merged.take(it) } ?: merged,
-            total = pages.sumOf { it.total },
+            total = pages.sumOf { (_, page) -> page.total },
             limit = limit ?: merged.size,
             offset = 0,
         )
