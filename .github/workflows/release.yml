@@ -34,8 +34,16 @@ jobs:
       - name: Derive version from tag
         id: version
         run: |
+          # Same scheme as the hub: vX.Y.Z is a release, vX.Y.Z-rc.N a pre-release.
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.(0|[1-9][0-9]*))?$ ]]; then
+            echo "::error::tag must be vX.Y.Z or vX.Y.Z-rc.N without leading zeroes"
+            exit 1
+          fi
+          prerelease=false
+          case "$GITHUB_REF_NAME" in *-rc.*) prerelease=true ;; esac
           echo "name=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
           echo "code=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
 
       - name: Decode release keystore
         run: echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > "${{ runner.temp }}/release.keystore"
@@ -66,3 +74,5 @@ jobs:
         with:
           files: release-out/*.apk
           generate_release_notes: true
+          prerelease: ${{ steps.version.outputs.prerelease == 'true' }}
+          make_latest: ${{ steps.version.outputs.prerelease == 'true' && 'false' || 'true' }}
